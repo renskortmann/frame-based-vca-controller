@@ -1,0 +1,15 @@
+# Full-bandwidth profile up to 7 kHz, 5.9 g rms.
+name = "Flat 20-7000 Hz, 0.005 g2/Hz"
+duration_s = 60.0
+
+breakpoints = [
+    { f_hz = 20.0, psd_g2_hz = 0.005 },
+    { f_hz = 7000.0, psd_g2_hz = 0.005 },
+]
+
+[tolerance]
+alarm_db = 3.0
+abort_db = 6.0
+rms_alarm_db = 1.5
+rms_abort_db = 3.0
+max_abort_lines_pct = 5.0

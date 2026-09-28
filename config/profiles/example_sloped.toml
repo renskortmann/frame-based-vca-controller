@@ -1,0 +1,18 @@
+# Trapezoidal profile defined with slopes (dB/octave) after the first breakpoint.
+# A breakpoint gives either psd_g2_hz or slope_db_oct (slope from the previous breakpoint).
+name = "Sloped 20-2000 Hz"
+duration_s = 60.0
+
+breakpoints = [
+    { f_hz = 20.0, psd_g2_hz = 0.002 },
+    { f_hz = 80.0, slope_db_oct = 6.0 },
+    { f_hz = 1000.0, slope_db_oct = 0.0 },
+    { f_hz = 2000.0, slope_db_oct = -6.0 },
+]
+
+[tolerance]
+alarm_db = 3.0
+abort_db = 6.0
+rms_alarm_db = 1.5
+rms_abort_db = 3.0
+max_abort_lines_pct = 5.0

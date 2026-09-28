@@ -1,0 +1,22 @@
+# TIRA Vibration Test System TV 52110 (exciter S 52110 + power amplifier BDA 120).
+# Values from docs/data_sheet_system_tv_52110_eng_V11.pdf.
+name = "TIRA TV 52110"
+f_min_hz = 2.0
+f_max_hz = 7000.0
+force_sine_peak_n = 100.0
+force_random_rms_n = 50.0          # random force according to ISO 5344:2004
+accel_sine_peak_g = 50.0
+accel_random_rms_g = 25.0
+displacement_pp_mm = 15.0          # payload reduces the usable displacement
+velocity_peak_m_s = 1.5
+moving_mass_kg = 0.25
+suspension_stiffness_n_per_mm = 13.1
+armature_resonance_hz = 5700.0     # "main resonance frequency > 5700 Hz"
+amp_input_full_v = 3.5             # BDA 120: input voltage (rms, 1 kHz sine) for full power
+
+# Model parameters used only by the simulated backend (--sim).
+[sim]
+amp_gain_a_per_v = 1.57
+bl_n_per_a = 12.9
+suspension_zeta = 0.15
+armature_q = 8.0

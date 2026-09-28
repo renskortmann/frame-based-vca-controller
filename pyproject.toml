@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vcactl"
+version = "0.1.0"
+description = "Frame-based closed-loop random vibration controller for TIRA shakers using an NI USB-6211"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.8",
+    "nidaqmx>=0.9",
+    "tomli>=1.1; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.5"]
+test = ["pytest>=7"]
+
+[project.scripts]
+vcactl = "vcactl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
