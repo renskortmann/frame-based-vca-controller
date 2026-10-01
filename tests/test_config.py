@@ -49,3 +49,9 @@ def test_bk4809_profile_loads():
     s = load_shaker("bk4809")
     assert s.moving_mass_kg == 0.06 and s.displacement_pp_mm == 8.0
     assert s.f_max_hz == 20000.0 and s.sim.bl_n_per_a == 6.4
+
+
+def test_bk2718_station_limits_match_amp():
+    st = load_station("config/station_bk2718.toml")
+    sh = load_shaker("bk4809")
+    assert st.safety.max_drive_rms_v <= sh.amp_input_full_v

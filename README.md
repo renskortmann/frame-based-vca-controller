@@ -54,7 +54,7 @@ vcactl run     --shaker tv51110 --profile config/profiles/example_flat.toml [--l
 
 - `--shaker` takes `tv51110`, `tv52110`, `bk4809`, or a path to a shaker TOML file.
 - `--sim` uses the simulated shaker instead of the DAQ. `--sim-realtime` paces it in real time.
-- `--station` points to a different station file. `--log-dir` sets the log root (default `runs/`).
+- `--station` points to a different station file (`config/station_bk2718.toml` for the BK 4809 + 2718). `--log-dir` sets the log root (default `runs/`).
 - Ctrl-C (or SIGTERM) ramps the drive down smoothly. A second Ctrl-C stops immediately and
   forces AO to 0 V.
 
