@@ -43,3 +43,9 @@ def test_station_validation(station, section, field, value):
 def test_missing_shaker(tmp_path):
     with pytest.raises(ConfigError, match="not found"):
         load_shaker("tv99999", tmp_path)
+
+
+def test_bk4809_profile_loads():
+    s = load_shaker("bk4809")
+    assert s.moving_mass_kg == 0.06 and s.displacement_pp_mm == 8.0
+    assert s.f_max_hz == 20000.0 and s.sim.bl_n_per_a == 6.4

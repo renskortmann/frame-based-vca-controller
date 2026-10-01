@@ -52,7 +52,7 @@ vcactl pretest --shaker tv51110 --profile config/profiles/example_flat.toml
 vcactl run     --shaker tv51110 --profile config/profiles/example_flat.toml [--level 0] [--duration 60]
 ```
 
-- `--shaker` takes `tv51110`, `tv52110`, or a path to a shaker TOML file.
+- `--shaker` takes `tv51110`, `tv52110`, `bk4809`, or a path to a shaker TOML file.
 - `--sim` uses the simulated shaker instead of the DAQ. `--sim-realtime` paces it in real time.
 - `--station` points to a different station file. `--log-dir` sets the log root (default `runs/`).
 - Ctrl-C (or SIGTERM) ramps the drive down smoothly. A second Ctrl-C stops immediately and
