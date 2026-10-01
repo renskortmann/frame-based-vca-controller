@@ -54,6 +54,8 @@ def preflight(profile: Profile, shaker: ShakerConfig, settings: Settings,
         return Check(name, value, limit, unit, value <= limit if ok is None else ok)
 
     checks = (
+        check("payload <= static max", settings.safety.payload_kg,
+              shaker.payload_static_max_kg, "kg"),
         check("accel rms", a_rms, shaker.accel_random_rms_g, "g"),
         check("force rms (m_total*a)", force, shaker.force_random_rms_n, "N"),
         check(f"velocity peak ({sigma:g} sigma)", v_pk, shaker.velocity_peak_m_s, "m/s"),

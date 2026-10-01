@@ -1,8 +1,8 @@
 # vcactl — frame-based closed-loop random vibration controller
 
-`vcactl` runs closed-loop **random vibration** tests on one of two TIRA test systems:
-**TV 51110** or **TV 52110**, each with a BDA 120 power amplifier, or a **BK 4809** with a BK 2718
-amplifier. The drive goes out through an **NI USB-6211**, **NI USB-4431** or **NI PXIe-4468**,
+`vcactl` runs closed-loop **random vibration** tests on a TIRA **TV 51110** or **TV 52110**
+(each with a BDA 120 power amplifier), a **BK 4809** with a BK 2718 amplifier, or a **BK 4801**
+body with **4812** general purpose head and a BK 2707 amplifier. The drive goes out through an **NI USB-6211**, **NI USB-4431** or **NI PXIe-4468**,
 and the loop is closed with an accelerometer on a charge amplifier (or an IEPE accelerometer
 on the USB-4431/PXIe-4468). The
 control band reaches **7 kHz**. It runs on **Windows 11** and **native Linux**, and includes a
@@ -62,7 +62,7 @@ vcactl pretest --shaker tv51110 --profile config/test_profiles/example_flat.toml
 vcactl run     --shaker tv51110 --profile config/test_profiles/example_flat.toml [--level 0] [--duration 60]
 ```
 
-- `--shaker` takes `tv51110`, `tv52110`, `bk4809`, or a path to a shaker TOML file.
+- `--shaker` takes `tv51110`, `tv52110`, `bk4809`, `bk4801_4812`, or a path to a shaker TOML file.
 - `--daq` takes `usb6211` (default), `usb4431`, `pxie4468`, or a path to a DAQ TOML file.
 - `--sim` uses the simulated shaker instead of the DAQ. `--sim-realtime` paces it in real time.
 - `--settings` points to a different settings file (default `config/settings.toml`; `--station` still works). `--log-dir` sets the log root (default `runs/`).
@@ -134,9 +134,10 @@ breakpoint.
   4. level ramp from −12 dB in 3 dB steps, each held until the rms error is ≤ 1 dB, then the
      test duration at full level;
   5. ramp-down to 0 V.
-- **Pre-flight (before any output):** rms acceleration, force (moving mass + payload), 3σ
-  velocity and 3σ peak-peak displacement against the shaker's data-sheet limits, plus the
-  frequency range.
+- **Pre-flight (before any output):** payload (`safety.payload_kg`) against the shaker's static
+  payload limit, rms acceleration, force (moving mass + payload), 3σ velocity and 3σ peak-peak
+  displacement against the shaker's data-sheet limits, plus the frequency range. The force check
+  is the dynamic payload limit; each shaker file lists it for a few acceleration levels.
 - **Runtime aborts:**
   - AI overload;
   - drive rms or clipping over the limit;
@@ -175,8 +176,8 @@ The shaker's `max_drive_v` must not exceed `daq.ao_range_v`. IEPE excitation req
   smoother but slower equalization.
 - The drive limits `max_drive_v` (peak clip) and `max_drive_rms_v` are in the shaker file,
   because they depend on the amplifier. For the TIRA shakers they are 3.5 V peak and 1.5 V rms;
-  the BDA 120 reaches full power at 3.5 V rms, so this is conservative. Raise them only if a
-  profile needs more drive. `max_drive_rms_v` may not exceed `amp_input_full_v`.
+  the BDA 120 reaches full power at 3.5 V peak (2.47 V rms) sine input. Raise the rms limit only
+  if a profile needs more drive. `max_drive_rms_v` may not exceed `amp_input_full_v`.
 
 ## Development
 

@@ -19,7 +19,7 @@ from .safety import preflight
 
 def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--shaker", required=True,
-                   help="shaker key (tv51110, tv52110, bk4809) or path to a shaker TOML file")
+                   help="shaker key (tv51110, tv52110, bk4809, bk4801_4812) or path to a shaker TOML file")
     p.add_argument("--profile", required=True, help="path to a test profile TOML file")
     p.add_argument("--daq", default="usb6211",
                    help="DAQ device key (usb6211, usb4431, pxie4468) or path to a DAQ TOML file "

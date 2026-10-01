@@ -1,0 +1,61 @@
+# Brüel & Kjær Exciter Body Type 4801 with General Purpose Head Type 4812, driven by
+# Power Amplifier Type 2707.
+# Values from docs/BK shaker 4801 - general purpose head 4812.pdf (instruction manual, section 9.3.2
+# and Table 3.1) and docs/BK amplifier 2707.pdf (instruction manual, chapter 6).
+#
+# Assumed amplifier setup (adjust amp_input_full_v, max_drive_v, max_drive_rms_v and [sim]
+# together if you use something else):
+#   OUTPUT IMPEDANCE "High" (current mode, 14 A/V), AMPLIFIER GAIN fully clockwise, signal on the
+#   DC-coupled input, CURRENT LIMIT at or below the 23 A rms head rating.
+#   Full output current is 22 A rms (40 Hz to 10 kHz), reached at 22 / 14 = 1.57 V rms input.
+#   With the gain knob turned down, the input for full output is proportionally higher.
+#   The 4801 body is blower-cooled; the ratings below assume the cooling is running.
+name = "BK 4801/4812 + 2707"
+f_min_hz = 5.0                     # 2707 delivers only 11 A at and below 5 Hz (22 A from 40 Hz)
+f_max_hz = 10000.0                 # 2707 full output 40 Hz to 10 kHz; head resonance at 7.2 kHz
+force_sine_peak_n = 445.0          # rated dynamic force on the 4801 body
+# The manuals give no random rating: derived as sine peak / sqrt(2) (equal rms current).
+force_random_rms_n = 315.0
+accel_sine_peak_g = 100.0          # bare table acceleration limit on the 4801 (981 m/s^2)
+accel_random_rms_g = 70.0          # derived: 100 g / sqrt(2) (= 315 N / 0.454 kg)
+displacement_pp_mm = 12.7          # continuous (14 mm between stops)
+velocity_peak_m_s = 1.14
+moving_mass_kg = 0.454             # "moving element dynamic mass"
+suspension_stiffness_n_per_mm = 21.0   # flexure stiffness
+armature_resonance_hz = 7200.0     # "resonance frequency, unloaded table"
+amp_input_full_v = 1.57            # 2707 current mode: 22 A rms at 14 A/V
+max_drive_v = 3.5                  # hard clip of the drive (peak), about 2.8 sigma of the rms limit
+max_drive_rms_v = 1.25             # abort if the drive rms exceeds this (80 % of the full-output input)
+
+# Static payload limit (vertical mounting), from the 4801 manual section 3.8: the flexures alone carry
+# at most 133 N (21 N/mm * 6.35 mm, 0.47 mm/kg sag), leaving no displacement. The 2707 can lift
+# the table back with DC centring current (up to 135 N static force, about 27 kg in total), but this
+# controller does not apply DC centring, and centring costs 10-30 % of the dynamic force.
+payload_static_max_kg = 13.5
+
+# Dynamic payload limit (accelerometer + fixture + specimen) for flat random profiles
+# from 20 Hz to f_max:
+#
+# Shaker (max stroke)              f_max            0.30 mm            0.96 mm            2.15 mm
+# BK 4801/4812 + 2707 (12.7 mm)   200 Hz 13.27 kg†  (0.4 g) 12.57 kg†  (1.3 g) 10.25 kg   (3.0 g)
+#                                 500 Hz 13.27 kg†  (0.7 g) 12.57 kg†  (2.2 g)  6.10 kg   (4.9 g)
+#                                  1 kHz 13.27 kg†  (1.0 g)  9.81 kg   (3.1 g)  4.13 kg   (7.0 g)
+#                                  2 kHz 13.27 kg†  (1.4 g)  6.76 kg   (4.4 g)  2.77 kg   (9.9 g)
+#                                  5 kHz 13.27 kg†  (2.2 g)  4.10 kg   (7.1 g)  1.58 kg  (15.8 g)
+#                                  7 kHz 11.70 kg   (2.6 g)  3.39 kg   (8.4 g)  1.27 kg  (18.7 g)
+#                                 10 kHz  9.71 kg   (3.2 g)  2.76 kg  (10.0 g)  0.98 kg  (22.3 g)
+#
+# Unmarked values are limited by force: payload <= force_random_rms_n / (a_rms * g) - moving_mass_kg.
+# † Limited by stroke when mounted vertically: the static sag plus half the vibration stroke
+#   must fit in the half-stroke. Mounted horizontally, these values rise to the force limit.
+# The stroke columns are the 3 sigma peak-peak displacement of flat PSDs of 0.001, 0.01 and
+# 0.05 g2/Hz; they barely depend on f_max, but grow steeply for a lower start frequency.
+# Values in brackets: the rms acceleration of the profile.
+# The pre-flight check applies the force limit to the actual profile and safety.payload_kg.
+
+# Model parameters used only by the simulated backend (--sim).
+[sim]
+amp_gain_a_per_v = 14.0            # 2707 "High" output impedance (current mode)
+bl_n_per_a = 17.2                  # 1 / head constant (58 mm/Vs)
+suspension_zeta = 0.15
+armature_q = 8.0

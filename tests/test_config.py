@@ -50,6 +50,31 @@ def test_bk4809_profile_loads():
     assert s.f_max_hz == 20000.0 and s.sim.bl_n_per_a == 6.4
 
 
+def test_tira_bda120_full_power_input():
+    # datasheet: 3.5 V peak (1 kHz sine) for full power
+    for key in ("tv51110", "tv52110"):
+        s = load_shaker(key)
+        assert s.amp_input_full_v == pytest.approx(3.5 / 2 ** 0.5, abs=0.01)
+        assert s.max_drive_rms_v <= s.amp_input_full_v
+
+
+@pytest.mark.parametrize("key,limit", [("tv51110", 5.3), ("tv52110", 10.0), ("bk4809", 4.9),
+                                       ("bk4801_4812", 13.5)])
+def test_static_payload_limits(key, limit):
+    s = load_shaker(key)
+    assert s.payload_static_max_kg == limit
+    # cross-check the derived limits: the sag at the limit must not exceed the half-stroke
+    sag_mm = limit * 9.80665 / s.suspension_stiffness_n_per_mm
+    assert sag_mm <= s.displacement_pp_mm / 2 + 0.1
+
+
+def test_bk4801_4812_profile_loads():
+    s = load_shaker("bk4801_4812")
+    assert s.moving_mass_kg == 0.454 and s.force_sine_peak_n == 445.0
+    assert s.armature_resonance_hz == 7200.0 and s.velocity_peak_m_s == 1.14
+    assert s.max_drive_rms_v <= s.amp_input_full_v == 1.57
+
+
 def test_bk4809_drive_limits_match_amp():
     sh = load_shaker("bk4809")
     assert sh.max_drive_rms_v <= sh.amp_input_full_v == 1.0
@@ -57,7 +82,7 @@ def test_bk4809_drive_limits_match_amp():
 
 
 @pytest.mark.parametrize("daq", ["usb6211", "usb4431", "pxie4468"])
-@pytest.mark.parametrize("shaker", ["tv51110", "tv52110", "bk4809"])
+@pytest.mark.parametrize("shaker", ["tv51110", "tv52110", "bk4809", "bk4801_4812"])
 def test_daq_profiles_load(daq, shaker):
     st = load_settings(daq=daq)
     validate_setup(st, load_shaker(shaker))

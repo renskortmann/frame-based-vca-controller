@@ -23,6 +23,32 @@ amp_input_full_v = 1.0             # 2718 at 20 dB gain: 5 A rms into ~2 ohm = 1
 max_drive_v = 2.5                  # hard clip of the drive (peak), about 3 sigma of the rms limit
 max_drive_rms_v = 0.8              # abort if the drive rms exceeds this (80 % of the 1 V rms rating)
 
+# Static payload limit (vertical mounting): the weight of accelerometer + fixture + specimen sags the
+# flexures by payload * g / stiffness (0.82 mm/kg). At payload_static_max_kg the sag uses up the
+# whole half-stroke (12 N/mm * 4 mm), so no displacement is left: the usable limit is lower.
+# Derived; the datasheet's performance curves go up to an 850 g payload (5 g sine).
+payload_static_max_kg = 4.9
+
+# Dynamic payload limit (accelerometer + fixture + specimen) for flat random profiles
+# from 20 Hz to f_max:
+#
+# Shaker (max stroke)      f_max            0.30 mm            0.96 mm            2.15 mm
+# BK 4809 + 2718 (8 mm)   200 Hz  4.71 kg†  (0.4 g)  2.33 kg   (1.3 g)  1.01 kg   (3.0 g)
+#                         500 Hz  4.58 kg   (0.7 g)  1.41 kg   (2.2 g)  0.60 kg   (4.9 g)
+#                          1 kHz  3.18 kg   (1.0 g)  0.97 kg   (3.1 g)  0.40 kg   (7.0 g)
+#                          2 kHz  2.22 kg   (1.4 g)  0.66 kg   (4.4 g)  0.26 kg   (9.9 g)
+#                          5 kHz  1.38 kg   (2.2 g)  0.40 kg   (7.1 g)  0.14 kg  (15.8 g)
+#                          7 kHz  1.16 kg   (2.6 g)  0.32 kg   (8.4 g)  0.11 kg  (18.7 g)
+#                         10 kHz  0.96 kg   (3.2 g)  0.26 kg  (10.0 g)  0.08 kg  (22.3 g)
+#
+# Unmarked values are limited by force: payload <= force_random_rms_n / (a_rms * g) - moving_mass_kg.
+# † Limited by stroke when mounted vertically: the static sag plus half the vibration stroke
+#   must fit in the half-stroke. Mounted horizontally, these values rise to the force limit.
+# The stroke columns are the 3 sigma peak-peak displacement of flat PSDs of 0.001, 0.01 and
+# 0.05 g2/Hz; they barely depend on f_max, but grow steeply for a lower start frequency.
+# Values in brackets: the rms acceleration of the profile.
+# The pre-flight check applies the force limit to the actual profile and safety.payload_kg.
+
 # Model parameters used only by the simulated backend (--sim).
 [sim]
 amp_gain_a_per_v = 5.0             # 10 V/V gain / ~2 ohm coil impedance

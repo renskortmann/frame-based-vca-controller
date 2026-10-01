@@ -50,6 +50,7 @@ class ShakerConfig:
     amp_input_full_v: float
     max_drive_v: float                # hard clip of the drive (peak) at the amplifier input
     max_drive_rms_v: float            # abort if the drive rms exceeds this
+    payload_static_max_kg: float      # payload whose weight uses up the half-stroke (vertical mounting)
     sim: SimModelConfig = field(default_factory=SimModelConfig)
 
 
@@ -224,7 +225,7 @@ def load_shaker(name_or_path: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> Sha
     for name in ("f_min_hz", "f_max_hz", "force_random_rms_n", "accel_random_rms_g",
                  "displacement_pp_mm", "velocity_peak_m_s", "moving_mass_kg",
                  "armature_resonance_hz", "amp_input_full_v", "max_drive_v",
-                 "max_drive_rms_v"):
+                 "max_drive_rms_v", "payload_static_max_kg"):
         if getattr(cfg, name) <= 0:
             raise ConfigError(f"{path}: {name} must be > 0")
     if cfg.max_drive_rms_v > cfg.max_drive_v:

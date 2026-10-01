@@ -46,3 +46,13 @@ def test_runtime_monitor(settings, tv51110):
     m.check_open_loop(0.01, 1.0)
     with pytest.raises(AbortError, match="open loop"):
         m.check_open_loop(0.01, 1.0)
+
+
+def test_static_payload_limit(settings, flat_profile):
+    import dataclasses
+    from vcactl.config import load_shaker
+    shaker = load_shaker("bk4809")             # static limit 4.9 kg
+    heavy = dataclasses.replace(settings, safety=dataclasses.replace(settings.safety, payload_kg=5.0))
+    report = preflight(flat_profile, shaker, heavy, level_db=-20)
+    failed = {c.name for c in report.checks if not c.ok}
+    assert "payload <= static max" in failed

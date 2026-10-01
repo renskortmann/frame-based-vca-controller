@@ -12,13 +12,40 @@ velocity_peak_m_s = 1.5
 moving_mass_kg = 0.23
 suspension_stiffness_n_per_mm = 8.0
 armature_resonance_hz = 6500.0     # "main resonance frequency > 6500 Hz"
-amp_input_full_v = 3.5             # BDA 120: input voltage (rms, 1 kHz sine) for full power
-max_drive_v = 3.5                  # hard clip of the drive (peak); conservative vs. 3.5 V rms full power
+amp_input_full_v = 2.47            # BDA 120: 3.5 V peak (1 kHz sine) input for full power = 2.47 V rms
+max_drive_v = 3.5                  # hard clip of the drive (peak) = full-power sine peak input
 max_drive_rms_v = 1.5              # abort if the drive rms exceeds this
+
+# Static payload limit (vertical mounting): the weight of accelerometer + fixture + specimen sags the
+# suspension by payload * g / stiffness (1.23 mm/kg). At payload_static_max_kg the sag uses up the
+# whole half-stroke (8 N/mm * 6.5 mm), so no displacement is left: the usable limit is lower.
+# Not in the datasheet (it only says payload reduces the usable displacement); derived.
+payload_static_max_kg = 5.3
+
+# Dynamic payload limit (accelerometer + fixture + specimen) for flat random profiles
+# from 20 Hz to f_max:
+#
+# Shaker (max stroke)      f_max            0.30 mm            0.96 mm            2.15 mm
+# TIRA TV 51110 (13 mm)   200 Hz  5.18 kg†  (0.4 g)  4.91 kg†  (1.3 g)  2.15 kg   (3.0 g)
+#                         500 Hz  5.18 kg†  (0.7 g)  3.03 kg   (2.2 g)  1.23 kg   (4.9 g)
+#                          1 kHz  5.18 kg†  (1.0 g)  2.05 kg   (3.1 g)  0.79 kg   (7.0 g)
+#                          2 kHz  4.84 kg   (1.4 g)  1.37 kg   (4.4 g)  0.49 kg   (9.9 g)
+#                          5 kHz  2.97 kg   (2.2 g)  0.78 kg   (7.1 g)  0.22 kg  (15.8 g)
+#                          7 kHz  2.47 kg   (2.6 g)  0.62 kg   (8.4 g)  0.15 kg  (18.7 g)
+#
+# Unmarked values are limited by force: payload <= force_random_rms_n / (a_rms * g) - moving_mass_kg.
+# † Limited by stroke when mounted vertically: the static sag plus half the vibration stroke
+#   must fit in the half-stroke. Mounted horizontally, these values rise to the force limit.
+# The stroke columns are the 3 sigma peak-peak displacement of flat PSDs of 0.001, 0.01 and
+# 0.05 g2/Hz; they barely depend on f_max, but grow steeply for a lower start frequency.
+# Values in brackets: the rms acceleration of the profile.
+# The pre-flight check applies the force limit to the actual profile and safety.payload_kg.
 
 # Model parameters used only by the simulated backend (--sim).
 [sim]
-amp_gain_a_per_v = 1.57            # BDA 120 current mode: 5.5 A at 3.5 V input
+# The BDA 120 has voltage mode only; the simulator models a current-driven shaker, so this is
+# the mid-band equivalent: 5.5 A rms at 2.47 V rms input. Back-EMF damping is not modelled.
+amp_gain_a_per_v = 2.23
 bl_n_per_a = 12.9                  # ~100 N peak at 5.5 A rms
 suspension_zeta = 0.15
 armature_q = 8.0

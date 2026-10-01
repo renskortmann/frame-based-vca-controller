@@ -49,6 +49,27 @@ cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is o
 - The DSA profiles are untested on hardware. The AI/AO start-trigger sync, coupling and IEPE
   settings follow the datasheets and the nidaqmx API but have only run against the simulator.
 
+### Payload limits (all shaker files)
+
+- `payload_static_max_kg`: the payload whose weight uses up the half-stroke when mounted vertically
+  (stiffness * half-stroke / g). Derived for the TIRA shakers and the BK 4809 (their datasheets
+  give no static limit); from the 4801 manual (133 N on the flexures) for the 4801/4812. The
+  pre-flight check compares `safety.payload_kg` against it.
+- The dynamic payload limit is not a separate setting: it is the force check
+  ((moving mass + payload) * a_rms <= `force_random_rms_n`). Each shaker file has a comment
+  table of payload limits for flat profiles from 20 Hz to f_max (columns: 0.001/0.01/0.05 g2/Hz,
+  labelled by the 3 sigma peak-peak stroke they need), also capped by stroke for vertical mounting
+  (sag + half the vibration stroke <= half-stroke). Regenerate the tables when the force rating,
+  moving mass, stiffness or stroke changes.
+- Static sag is not subtracted from the usable displacement in the pre-flight check.
+
+### TIRA TV 51110 / TV 52110 + BDA 120
+
+- The BDA 120 has voltage mode only (datasheet: "Voltage-/Current mode yes/no"). Full power is
+  reached at 3.5 V peak (1 kHz sine) input, so `amp_input_full_v = 2.47` V rms.
+- `[sim] amp_gain_a_per_v = 2.23` is the mid-band equivalent (5.5 A rms at 2.47 V rms) for the
+  simulator's current-drive model; back-EMF damping in voltage mode is not modelled.
+
 ### BK 4809 + 2718 assumptions (not stated in the datasheets)
 
 - Amplifier setup: gain switch at 20 dB, input attenuator fully open, current limit knob at 5 A
@@ -64,7 +85,23 @@ cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is o
 - Rated without forced air cooling (44.5 N, 75 g). With cooling the datasheet allows 60 N and
   about 100 g; the profile does not use those.
 
+### BK 4801/4812 + 2707 assumptions (not stated in the manuals)
+
+- The sources are old instruction manuals (scanned with a text layer), not datasheets; the 4812
+  values are in the 4801 manual, section 9.3.2.
+- Amplifier setup: OUTPUT IMPEDANCE "High" (current mode, 14 A/V), AMPLIFIER GAIN fully clockwise,
+  CURRENT LIMIT at or below the 23 A rms head rating. Full output (22 A rms) is reached at
+  1.57 V rms input (`amp_input_full_v`). Current mode was chosen because the simulator models a
+  current-driven shaker; in "Low" (voltage) mode the 2707 is 5 V/V and the response depends on the
+  coil impedance and back-EMF, so `amp_input_full_v` and `[sim]` would need revisiting.
+- Drive limits: `max_drive_v = 3.5` (fits the USB-4431 +/-3.5 V AO range) and
+  `max_drive_rms_v = 1.25` (80 % of 1.57 V rms).
+- Random ratings derived like the BK 4809: 445 N sine peak / sqrt(2) = 315 N rms, 100 g / sqrt(2)
+  = 70 g rms. `bl_n_per_a = 17.2` is 1 / head constant (58 mm/Vs).
+- `f_min_hz = 5`: the 2707 gives full current only from 40 Hz (11 A at and below 5 Hz).
+  `f_max_hz = 10000`: the 2707 full-output limit; the head resonance is at 7.2 kHz.
+
 ## Status
 
-- Only simulated runs and `check` have been done for the BK 4809 setup. `pretest` and `run` on
+- Only simulated runs and `check` have been done for the BK 4809 and BK 4801/4812 setups. `pretest` and `run` on
   real hardware are still untested; start with a low `--level` (for example `-12`).
