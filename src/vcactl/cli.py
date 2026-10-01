@@ -9,7 +9,8 @@ import time
 from pathlib import Path
 
 from . import __version__
-from .config import DEFAULT_CONFIG_DIR, ConfigError, load_shaker, load_station
+from .config import (DEFAULT_CONFIG_DIR, ConfigError, load_shaker, load_settings,
+                     validate_setup)
 from .controller import Controller, State
 from .logger import RunLogger
 from .profile import load_profile
@@ -18,12 +19,15 @@ from .safety import preflight
 
 def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--shaker", required=True,
-                   help="shaker key (tv51110, tv52110) or path to a shaker TOML file")
+                   help="shaker key (tv51110, tv52110, bk4809) or path to a shaker TOML file")
     p.add_argument("--profile", required=True, help="path to a test profile TOML file")
-    p.add_argument("--station", default=None,
-                   help=f"station TOML (default: {DEFAULT_CONFIG_DIR / 'station.toml'})")
+    p.add_argument("--daq", default="usb6211",
+                   help="DAQ device key (usb6211, usb4431, pxie4468) or path to a DAQ TOML file "
+                        "(default usb6211)")
+    p.add_argument("--settings", "--station", dest="settings", default=None,
+                   help=f"settings TOML (default: {DEFAULT_CONFIG_DIR / 'settings.toml'})")
     p.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR,
-                   help="directory containing shakers/*.toml")
+                   help="directory containing shakers/*.toml and daq/*.toml")
     p.add_argument("--level", type=float, default=0.0,
                    help="target level in dB relative to the profile (default 0)")
 
@@ -76,12 +80,12 @@ def _print_status(row: dict, last: list) -> None:
     sys.stdout.flush()
 
 
-def _make_backend(args, station, shaker, block_io):
+def _make_backend(args, settings, shaker, block_io):
     if args.sim:
         from .daq.sim import SimulatedDaq
-        return SimulatedDaq(station, shaker, realtime=args.sim_realtime, seed=args.seed)
+        return SimulatedDaq(settings, shaker, realtime=args.sim_realtime, seed=args.seed)
     from .daq.nidaq import NiDaq
-    return NiDaq(station, block_io)
+    return NiDaq(settings, block_io)
 
 
 def cmd_list_devices() -> int:
@@ -98,24 +102,25 @@ def cmd_list_devices() -> int:
     return 0
 
 
-def cmd_check(args, station, shaker, profile) -> int:
-    report = preflight(profile, shaker, station, args.level)
-    print(f"shaker : {shaker.name}\nprofile: {profile.name} at {args.level:+.1f} dB "
+def cmd_check(args, settings, shaker, profile) -> int:
+    report = preflight(profile, shaker, settings, args.level)
+    print(f"shaker : {shaker.name}\ndaq    : {settings.daq.model}\nprofile: {profile.name} at {args.level:+.1f} dB "
           f"({profile.f_lo:g}-{profile.f_hi:g} Hz, {profile.accel_rms_g() * 10 ** (args.level / 20):.3f} g rms)\n")
     print(report.format())
     print("\nPASS" if report.ok else "\nFAIL")
     return 0 if report.ok else 2
 
 
-def cmd_run(args, station, shaker, profile, pretest_only: bool) -> int:
-    report = preflight(profile, shaker, station, args.level)
+def cmd_run(args, settings, shaker, profile, pretest_only: bool) -> int:
+    report = preflight(profile, shaker, settings, args.level)
     print(report.format())
     if not report.ok:
         print("\npre-flight check FAILED; nothing was output")
         return 2
     if not args.sim and not args.yes:
-        print(f"\nAbout to drive {shaker.name} via {station.daq.device}/{station.daq.ao_channel} "
-              f"(max {station.safety.max_drive_v:g} V).\nCheck the amplifier gain, the accelerometer "
+        print(f"\nAbout to drive {shaker.name} via {settings.daq.model} "
+              f"{settings.daq.device}/{settings.daq.ao_channel} "
+              f"(max {shaker.max_drive_v:g} V).\nCheck the amplifier gain, the accelerometer "
               "mounting and the charge amplifier setting.")
         if input("Type 'yes' to start: ").strip().lower() != "yes":
             print("cancelled")
@@ -123,13 +128,13 @@ def cmd_run(args, station, shaker, profile, pretest_only: bool) -> int:
 
     tag = f"{'pretest' if pretest_only else 'run'}_{Path(args.shaker).stem}_{Path(args.profile).stem}"
     logger = RunLogger(args.log_dir, tag + ("_sim" if args.sim else ""))
-    block_io = station.control.frame_size // 2 * station.daq.decimation
-    backend = _make_backend(args, station, shaker, block_io)
+    block_io = settings.control.frame_size // 2 * settings.daq.decimation
+    backend = _make_backend(args, settings, shaker, block_io)
     last = [0.0]
-    ctl = Controller(station, shaker, profile, backend, target_level_db=args.level,
+    ctl = Controller(settings, shaker, profile, backend, target_level_db=args.level,
                      duration_s=getattr(args, "duration", None), logger=logger, seed=args.seed,
                      on_status=lambda row: _print_status(row, last))
-    logger.meta({"version": __version__, "shaker": shaker, "station": station,
+    logger.meta({"version": __version__, "shaker": shaker, "settings": settings,
                  "profile": profile, "level_db": args.level, "sim": args.sim,
                  "pretest_only": pretest_only, "started": time.strftime("%Y-%m-%dT%H:%M:%S")})
 
@@ -171,12 +176,13 @@ def main(argv=None) -> int:
     if args.cmd == "list-devices":
         return cmd_list_devices()
     try:
-        station = load_station(args.station)
+        settings = load_settings(args.settings, args.daq, args.config_dir)
         shaker = load_shaker(args.shaker, args.config_dir)
         profile = load_profile(args.profile)
+        validate_setup(settings, shaker)
     except ConfigError as exc:
         print(f"configuration error: {exc}", file=sys.stderr)
         return 2
     if args.cmd == "check":
-        return cmd_check(args, station, shaker, profile)
-    return cmd_run(args, station, shaker, profile, pretest_only=args.cmd == "pretest")
+        return cmd_check(args, settings, shaker, profile)
+    return cmd_run(args, settings, shaker, profile, pretest_only=args.cmd == "pretest")

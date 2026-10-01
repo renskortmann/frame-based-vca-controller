@@ -1,7 +1,8 @@
 # Brüel & Kjær Vibration Exciter Type 4809 driven by Power Amplifier Type 2718.
 # Values from docs/BK shaker 4809.pdf (BP 0231) and docs/BK amplifier 2718.pdf (BP 1928).
 #
-# Assumed amplifier setup (adjust amp_input_full_v / [sim] if you use something else):
+# Assumed amplifier setup (adjust amp_input_full_v, max_drive_v, max_drive_rms_v and [sim]
+# together if you use something else):
 #   gain switch 20 dB (x10), input attenuator fully open, current limit set to 5 A rms.
 #   Into the ~2 ohm exciter coil this gives ~5 A/V, so 5 A rms (full rating) needs 1 V rms in.
 #   The 2718 has 40 dB max gain; with the 40 dB step, full current is reached at 0.1 V rms.
@@ -19,6 +20,8 @@ moving_mass_kg = 0.060             # "dynamic weight of moving element"
 suspension_stiffness_n_per_mm = 12.0
 armature_resonance_hz = 20000.0    # "axial resonant frequency, bare table"
 amp_input_full_v = 1.0             # 2718 at 20 dB gain: 5 A rms into ~2 ohm = 10 V rms out
+max_drive_v = 2.5                  # hard clip of the drive (peak), about 3 sigma of the rms limit
+max_drive_rms_v = 0.8              # abort if the drive rms exceeds this (80 % of the 1 V rms rating)
 
 # Model parameters used only by the simulated backend (--sim).
 [sim]

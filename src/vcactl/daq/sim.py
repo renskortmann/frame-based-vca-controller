@@ -14,7 +14,7 @@ import time
 import numpy as np
 from scipy import signal
 
-from ..config import SensorConfig, ShakerConfig, StationConfig
+from ..config import SensorConfig, ShakerConfig, Settings
 from ..profile import G
 from .base import DaqFault
 
@@ -35,14 +35,17 @@ def shaker_model_sos(shaker: ShakerConfig, payload_kg: float, fs: float) -> np.n
 
 
 class SimulatedDaq:
-    def __init__(self, station: StationConfig, shaker: ShakerConfig, *,
+    def __init__(self, settings: Settings, shaker: ShakerConfig, *,
                  sensor: SensorConfig | None = None, realtime: bool = False,
                  seed: int | None = None, disconnect_after_s: float | None = None):
-        self.fs_io = station.daq.fs_io_hz
-        self.ai_range = station.daq.ai_range_v
-        self.v_per_g = (sensor or station.sensor).sensitivity_mv_per_g / 1000
+        self.fs_io = settings.daq.fs_io_hz
+        self.ai_range = settings.daq.ai_range_v
+        self.ao_range = settings.daq.ao_range_v
+        self.v_per_g = (sensor or settings.sensor).sensitivity_mv_per_g / 1000
         self.sim = shaker.sim
-        self.sos = shaker_model_sos(shaker, station.safety.payload_kg, self.fs_io)
+        self.delay_samples = self.sim.io_delay_samples + round(
+            settings.daq.limits.filter_delay_samples)
+        self.sos = shaker_model_sos(shaker, settings.safety.payload_kg, self.fs_io)
         self.zi = np.zeros((self.sos.shape[0], 2))
         self.rng = np.random.default_rng(seed)
         self.realtime = realtime
@@ -55,7 +58,7 @@ class SimulatedDaq:
         self.stopped_at_zero = None
 
     def start(self, prefill: np.ndarray) -> None:
-        self.queue = np.concatenate([np.zeros(self.sim.io_delay_samples), prefill])
+        self.queue = np.concatenate([np.zeros(self.delay_samples), prefill])
         self.running = True
         self.t0 = time.monotonic()
         self.written.append(np.asarray(prefill, dtype=float).copy())
@@ -63,8 +66,8 @@ class SimulatedDaq:
     def write(self, data: np.ndarray) -> None:
         if not self.running:
             raise DaqFault("write on a stopped task")
-        if np.any(np.abs(data) > 10.0):
-            raise DaqFault("AO sample outside +/-10 V")
+        if np.any(np.abs(data) > self.ao_range):
+            raise DaqFault(f"AO sample outside +/-{self.ao_range:g} V")
         self.queue = np.concatenate([self.queue, data])
         self.written.append(np.asarray(data, dtype=float).copy())
 

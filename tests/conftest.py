@@ -1,17 +1,17 @@
 import pytest
 
-from vcactl.config import load_shaker, load_station
+from vcactl.config import load_shaker, load_settings
 from vcactl.profile import load_profile
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILES = ROOT / "config" / "profiles"
+PROFILES = ROOT / "config" / "test_profiles"
 
 
 @pytest.fixture
-def station():
-    return load_station()
+def settings():
+    return load_settings()
 
 
 @pytest.fixture(params=["tv51110", "tv52110"])

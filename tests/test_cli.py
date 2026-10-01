@@ -23,3 +23,9 @@ def test_run_sim(tmp_path, capsys):
 def test_config_error_exit_code(capsys):
     assert main(["check", "--shaker", "nope", "--profile", str(PROFILES / "example_flat.toml")]) == 2
     assert "configuration error" in capsys.readouterr().err
+
+
+def test_check_with_daq(capsys):
+    assert main(["check", "--daq", "pxie4468", "--shaker", "tv51110", "--profile",
+                 str(PROFILES / "example_flat.toml")]) == 0
+    assert "NI PXIe-4468" in capsys.readouterr().out

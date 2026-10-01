@@ -25,7 +25,7 @@ from typing import Callable
 import numpy as np
 from scipy.ndimage import uniform_filter1d
 
-from .config import ShakerConfig, StationConfig
+from .config import ShakerConfig, Settings, validate_setup
 from .daq.base import DaqBackend, DaqFault
 from .drive import RandomDriveGenerator, flat_psd
 from .dsp.resample import Decimator, Interpolator, design_lowpass, total_delay_control_samples
@@ -103,20 +103,21 @@ class RunResult:
 
 
 class Controller:
-    def __init__(self, station: StationConfig, shaker: ShakerConfig, profile: Profile,
+    def __init__(self, settings: Settings, shaker: ShakerConfig, profile: Profile,
                  backend: DaqBackend, *, target_level_db: float = 0.0,
                  duration_s: float | None = None, logger: RunLogger | None = None,
                  seed: int | None = None,
                  on_status: Callable[[dict], None] | None = None):
-        self.station, self.shaker, self.profile = station, shaker, profile
+        validate_setup(settings, shaker)
+        self.settings, self.shaker, self.profile = settings, shaker, profile
         self.backend, self.logger, self.on_status = backend, logger, on_status
-        c, d = station.control, station.daq
-        self.c, self.s = c, station.safety
+        c, d = settings.control, settings.daq
+        self.c, self.s = c, settings.safety
         self.target_level_db = target_level_db
         self.duration_s = profile.duration_s if duration_s is None else duration_s
 
         self.R = d.decimation
-        self.fs = station.fs_control_hz
+        self.fs = settings.fs_control_hz
         self.N = c.frame_size
         self.half = self.N // 2
         self.block_io = self.half * self.R
@@ -126,12 +127,14 @@ class Controller:
         self.freqs, self.df = self.spec.freqs, self.spec.df
         self.band = (self.freqs >= profile.f_lo) & (self.freqs <= profile.f_hi)
         self.s_ref = profile.psd(self.freqs)          # at 0 dB
-        self.v_per_g = station.sensor.sensitivity_mv_per_g / 1000
+        self.v_per_g = settings.sensor.sensitivity_mv_per_g / 1000
 
         taps = design_lowpass(d.fs_io_hz, self.R)
         self.interp = Interpolator(taps, self.R)
         self.decim = Decimator(taps, self.R)
-        self.delay = total_delay_control_samples(taps, self.R)
+        # drive -> response delay: FIR resampling plus the DAQ's converter filters (DSA devices)
+        self.delay = (total_delay_control_samples(taps, self.R)
+                      + round(d.limits.filter_delay_samples / self.R))
 
         self.gen = RandomDriveGenerator(self.N, self.fs, np.random.default_rng(seed))
         cap = 4 * self.N + self.delay + (self.P + 2) * self.half
@@ -153,7 +156,7 @@ class Controller:
         self.state = State.IDLE
         self.samples = 0
         self.run_time_s = 0.0
-        self.monitor = RuntimeMonitor(station, shaker)
+        self.monitor = RuntimeMonitor(settings, shaker)
         self.stop_requested = False
         self._drive_psd = np.zeros(len(self.freqs))
         self._abort_lines_blocks = 0
@@ -184,7 +187,7 @@ class Controller:
         self.seg_hist.append(np.full(self.half, seg))
 
         y = self.interp.process(x)
-        lim = self.s.max_drive_v
+        lim = self.shaker.max_drive_v
         clipped = np.abs(y) > lim
         y = np.clip(y, -lim, lim)
         self.backend.write(y)
@@ -319,14 +322,14 @@ class Controller:
         self.state = State.NOISE
         zeros = np.zeros(len(self.freqs))
         self.seg = 0
-        while self.noise.count < self.station.pretest.noise_blocks:
+        while self.noise.count < self.settings.pretest.noise_blocks:
             self._check_stop()
             sd = self._step(zeros)
             self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
 
     def _pretest_phase(self) -> None:
         self.state = State.PRETEST
-        pt = self.station.pretest
+        pt = self.settings.pretest
         seg = self._new_segment("pretest", 1.0)
         psd = flat_psd(self.freqs, self.profile.f_lo, self.profile.f_hi, pt.drive_rms_v)
         self._drive_psd = psd
@@ -358,7 +361,7 @@ class Controller:
         full = self._run_drive_psd() * 10 ** (self.target_level_db / 10)
         drive_rms = float(np.sqrt(np.sum(full) * self.df))
         self.pretest_info["predicted_drive_rms_v"] = drive_rms
-        limit = min(self.s.max_drive_rms_v, self.s.max_drive_v / 3)
+        limit = min(self.shaker.max_drive_rms_v, self.shaker.max_drive_v / 3)
         if drive_rms > limit:
             raise AbortError(f"pretest: profile needs about {drive_rms:.2f} V rms drive at the target "
                              f"level; limit is {limit:.2f} V rms (max_drive_rms_v, max_drive_v/3)")
@@ -430,7 +433,7 @@ class Controller:
 
     # ------------------------------------------------------------------ entry
     def run(self, pretest_only: bool = False) -> RunResult:
-        report = preflight(self.profile, self.shaker, self.station, self.target_level_db)
+        report = preflight(self.profile, self.shaker, self.settings, self.target_level_db)
         if not report.ok:
             return self._result(False, State.ABORTED, "pre-flight check failed:\n" + report.format())
 

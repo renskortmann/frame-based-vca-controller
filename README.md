@@ -1,8 +1,10 @@
 # vcactl — frame-based closed-loop random vibration controller
 
 `vcactl` runs closed-loop **random vibration** tests on one of two TIRA test systems:
-**TV 51110** or **TV 52110**, each with a BDA 120 power amplifier. The drive goes out through
-an **NI USB-6211** and the loop is closed with an accelerometer on a charge amplifier. The
+**TV 51110** or **TV 52110**, each with a BDA 120 power amplifier, or a **BK 4809** with a BK 2718
+amplifier. The drive goes out through an **NI USB-6211**, **NI USB-4431** or **NI PXIe-4468**,
+and the loop is closed with an accelerometer on a charge amplifier (or an IEPE accelerometer
+on the USB-4431/PXIe-4468). The
 control band reaches **7 kHz**. It runs on **Windows 11** and **native Linux**, and includes a
 simulated shaker for development without hardware.
 
@@ -17,15 +19,23 @@ simulated shaker for development without hardware.
 | AI 1 (pin 17) / AI 9 (pin 18) | charge amplifier output: signal / reference (differential) |
 | AI GND (pin 28) | if the charge amplifier output is **floating** (battery powered): 10–100 kΩ from AI 9 to AI GND |
 
-Power sequence, which matters because the USB-6211 AO glitches by about ±1 V for 200 ms at power-on:
+The table is for the USB-6211. On the USB-4431 and PXIe-4468 (BNC), connect AO 0 to the amplifier
+input and AI 0 to the charge amplifier output, or connect an IEPE accelerometer directly to AI 0
+and set `iepe_current_ma` in the DAQ profile (`config/daq/*.toml`).
 
-1. Connect the USB-6211 and let the PC enumerate it. Leave the **amplifier off**.
+Power sequence, which matters because the USB-6211 AO glitches by about ±1 V for 200 ms at power-on
+(the USB-4431 AO also glitches at power-on):
+
+1. Connect the DAQ and let the PC enumerate it. Leave the **amplifier off**.
 2. Switch on the amplifier with its gain knob in the usual position. Keep the knob in the same
    position for the whole test, because the pretest measures the system with that gain.
 3. When finished, switch the amplifier **off before** unplugging USB or shutting down the PC.
 
-Set `sensor.sensitivity_mv_per_g` in `config/station.toml` to the charge amplifier's output
-scaling. Choose it so the expected peak response (about 4–5 × rms) stays inside `daq.ai_range_v`.
+Set `sensor.sensitivity_mv_per_g` in `config/settings.toml` to the sensitivity of the measurement
+chain at the DAQ input, in mV/g. With a charge amplifier, this is its output setting in mV/g (not
+its mV/pC gain). With IEPE, it is the accelerometer's calibrated sensitivity. With a charge
+amplifier, choose the output setting so the expected peak response (about 4–5 × rms) stays inside
+`daq.ai_range_v`. With IEPE, choose the AI range to suit the accelerometer.
 For example, 10 mV/g at 30 g rms gives peaks around 1.5 V on the 10 V range.
 
 ## Installation
@@ -47,14 +57,15 @@ For example, 10 mV/g at 30 g rms gives peaks around 1.5 V on the 10 V range.
 ## Usage
 
 ```
-vcactl check   --shaker tv51110 --profile config/profiles/example_flat.toml [--level -6]
-vcactl pretest --shaker tv51110 --profile config/profiles/example_flat.toml
-vcactl run     --shaker tv51110 --profile config/profiles/example_flat.toml [--level 0] [--duration 60]
+vcactl check   --shaker tv51110 --profile config/test_profiles/example_flat.toml [--level -6]
+vcactl pretest --shaker tv51110 --profile config/test_profiles/example_flat.toml
+vcactl run     --shaker tv51110 --profile config/test_profiles/example_flat.toml [--level 0] [--duration 60]
 ```
 
 - `--shaker` takes `tv51110`, `tv52110`, `bk4809`, or a path to a shaker TOML file.
+- `--daq` takes `usb6211` (default), `usb4431`, `pxie4468`, or a path to a DAQ TOML file.
 - `--sim` uses the simulated shaker instead of the DAQ. `--sim-realtime` paces it in real time.
-- `--station` points to a different station file (`config/station_bk2718.toml` for the BK 4809 + 2718). `--log-dir` sets the log root (default `runs/`).
+- `--settings` points to a different settings file (default `config/settings.toml`; `--station` still works). `--log-dir` sets the log root (default `runs/`).
 - Ctrl-C (or SIGTERM) ramps the drive down smoothly. A second Ctrl-C stops immediately and
   forces AO to 0 V.
 
@@ -78,7 +89,7 @@ Each run directory contains:
 - `psd_<t>s.csv` snapshots and `psd_final.csv`: reference, control PSD, tolerance bands,
   drive PSD, FRF and correction.
 
-## Profiles
+## Test profiles (`config/test_profiles/*.toml`)
 
 ```toml
 name = "Sloped 20-2000 Hz"
@@ -106,6 +117,11 @@ breakpoint.
   `ai/SampleClock`). The control rate is 25 kS/s after 4× FIR decimation and interpolation
   with ≥ 80 dB stop band. That filtering is needed because the USB-6211 has no anti-aliasing
   filter. With frames of N = 4096, the line spacing is Δf = 6.1 Hz and one loop step is 82 ms.
+  The USB-4431 and PXIe-4468 have delta-sigma converters with built-in anti-aliasing. They run
+  at 51.2 kS/s with 2× decimation (25.6 kS/s control rate, Δf = 6.25 Hz). Their AO has its own
+  sample clock from the same timebase and starts on `ai/StartTrigger`. The converter filters
+  delay the response by about 100 samples (`limits.filter_delay_samples` in the DAQ profile),
+  and the controller shifts the drive by that amount before estimating the FRF.
 - **Drive:** each frame gets new random phases. Frames are sqrt-Hann windowed and overlap-added
   at 50 %, giving a continuous, Gaussian, non-periodic signal. AO regeneration is off, so the
   output always comes from the controller.
@@ -133,22 +149,40 @@ breakpoint.
   (`ao_queue_blocks` + 1 half-frames, about 250 ms) still plays out before the ramp-down.
   A DAQ fault stops immediately and writes 0 V.
 
-## Tuning notes (`config/station.toml`)
+## DAQ profiles (`config/daq/*.toml`)
+
+A DAQ profile holds the device settings (device name, channels, ranges, coupling, IEPE, rates)
+and, under `[limits]`, the device's data-sheet capabilities. All settings are checked against
+these limits when the configuration is loaded. The settings file can override DAQ settings
+in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
+
+| `--daq` | AI ranges (V) | AO range (V) | Rates | Notes |
+|---|---|---|---|---|
+| `usb6211` | 0.2, 1, 5, 10 | 10 | 20 MHz / n, ≤ 250 kS/s | no anti-aliasing filter: `decimation` ≥ 2 |
+| `usb4431` | 10 | 3.5 | 51.2 k, 80 k, 96 k ÷ 2ⁿ | IEPE 2.1 mA; shaker `max_drive_v` ≤ 3.5 |
+| `pxie4468` | 0.316 … 42.4 | 0.316, 1, 3.16, 10 | 100 S/s – 200 kS/s | IEPE 4/10/20 mA; `filter_delay_samples` depends on the rate |
+
+The shaker's `max_drive_v` must not exceed `daq.ao_range_v`. IEPE excitation requires AC coupling.
+
+## Tuning notes (`config/settings.toml`)
 
 - Underflow errors (-200621/-200290) on a slow or busy PC: increase `daq.ao_queue_blocks`.
   This adds latency.
-- `daq.fs_io_hz` must divide 20 MHz exactly (100 k, 125 k, 200 k, 250 k ...). The control
-  band is limited to 0.6 × control Nyquist (7.5 kHz with the defaults).
+- `daq.fs_io_hz` must be a rate the device supports (see the DAQ profiles above). The control
+  band is limited to 0.6 × control Nyquist (7.5 kHz with the USB-6211 defaults, 7.68 kHz with
+  the USB-4431/PXIe-4468 defaults).
 - `control.correction_gain` above about 0.2 can overshoot. Raise `control.control_dof` for
   smoother but slower equalization.
-- `safety.max_drive_v` defaults to 3.5 V peak. The BDA 120 reaches full power at 3.5 V rms,
-  so this default is conservative. Raise it only if a profile needs more drive.
+- The drive limits `max_drive_v` (peak clip) and `max_drive_rms_v` are in the shaker file,
+  because they depend on the amplifier. For the TIRA shakers they are 3.5 V peak and 1.5 V rms;
+  the BDA 120 reaches full power at 3.5 V rms, so this is conservative. Raise them only if a
+  profile needs more drive. `max_drive_rms_v` may not exceed `amp_input_full_v`.
 
 ## Development
 
 ```
 .venv/bin/pytest            # all tests use the simulated shaker
-vcactl run --sim --shaker tv52110 --profile config/profiles/example_wideband.toml --duration 30
+vcactl run --sim --shaker tv52110 --profile config/test_profiles/example_wideband.toml --duration 30
 ```
 
 Layout:

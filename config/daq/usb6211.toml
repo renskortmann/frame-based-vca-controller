@@ -1,0 +1,29 @@
+# NI USB-6211 multifunction DAQ (16-bit SAR ADC, no anti-aliasing filter).
+# Values from docs/usb-6211_specifications_2026-09-28-13-21-50.pdf.
+# Select with --daq usb6211 (the default).
+model = "NI USB-6211"
+device = "Dev1"                # NI device name as shown by `vcactl list-devices` / NI MAX
+ao_channel = "ao0"             # -> amplifier input (AO 0 pin 12, AO GND pin 14)
+ai_channel = "ai1"             # <- charge amplifier output
+ai_terminal_config = "DIFF"    # DIFF (AI1+/AI9-), RSE or NRSE
+ai_range_v = 10.0              # ranges: 0.2, 1, 5, 10
+ao_range_v = 10.0              # fixed +/-10 V
+fs_io_hz = 100000.0            # AI/AO rate; 20 MHz / fs_io_hz must be an integer
+decimation = 4                 # control rate = fs_io_hz / decimation (25 kHz)
+ao_queue_blocks = 2            # half-frames queued ahead in the AO buffer (latency vs. underrun margin)
+
+[limits]
+ai_ranges_v = [0.2, 1.0, 5.0, 10.0]
+ao_ranges_v = [10.0]
+ai_terminal_configs = ["DIFF", "RSE", "NRSE"]
+ao_terminal_configs = []       # single-ended (RSE) only
+ai_couplings = ["DC"]
+iepe_currents_ma = []
+fs_min_hz = 1.0
+fs_max_hz = 250000.0           # AI 250 kS/s single channel, AO 250 kS/s
+fs_allowed_hz = []
+timebase_hz = 20e6             # sample clock timebase
+antialias_filter = false       # AI must be oversampled: decimation >= 2
+ao_sync = "sample_clock"       # AO is clocked from ai/SampleClock
+ao_on_demand = true
+filter_delay_samples = 0.0     # SAR ADC and R-2R DAC: no converter filter delay

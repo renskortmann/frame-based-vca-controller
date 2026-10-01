@@ -1,17 +1,14 @@
-# Test-station configuration: DAQ wiring, sensor, control and safety settings.
+# Test settings: sensor, control, safety and pretest settings (independent of shaker and DAQ).
 
-[daq]
-device = "Dev1"                # NI device name as shown by `vcactl list-devices` / NI MAX
-ao_channel = "ao0"             # -> BDA 120 amplifier input
-ai_channel = "ai1"             # <- charge amplifier output
-ai_terminal_config = "DIFF"    # DIFF (AI1+/AI9-), RSE or NRSE
-ai_range_v = 10.0              # USB-6211 ranges: 0.2, 1, 5, 10
-fs_io_hz = 100000.0            # AI/AO rate; 20 MHz / fs_io_hz must be an integer
-decimation = 4                 # control rate = fs_io_hz / decimation (25 kHz)
-ao_queue_blocks = 2            # half-frames queued ahead in the AO buffer (latency vs. underrun margin)
+# DAQ settings come from the device profile chosen with --daq (config/daq/*.toml, default
+# usb6211). DAQ settings can be overridden here, for example:
+# [daq]
+# device = "Dev2"
 
 [sensor]
-sensitivity_mv_per_g = 10.0    # charge amplifier output scaling (mV/g)
+sensitivity_mv_per_g = 10.0    # sensitivity of the measurement chain at the DAQ input (mV/g):
+                               # the charge amplifier's output setting (mV/g, not its mV/pC gain),
+                               # or the IEPE accelerometer's calibrated sensitivity
 
 [control]
 frame_size = 4096              # samples per frame at the control rate (df = fs / frame_size)
@@ -32,8 +29,6 @@ rampdown_s = 0.5
 snapshot_interval_s = 5.0      # PSD snapshot logging interval
 
 [safety]
-max_drive_v = 3.5              # hard clip of AO0 (peak). BDA 120 reaches full power at 3.5 V rms.
-max_drive_rms_v = 1.5          # abort if the drive rms exceeds this
 max_clip_fraction = 0.005      # abort if more than this fraction of a block is clipped
 payload_kg = 0.02              # accelerometer + fixture + specimen mass on the armature
 displacement_sigma = 3.0       # peak = sigma * rms for displacement/velocity pre-checks

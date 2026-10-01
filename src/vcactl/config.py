@@ -1,4 +1,4 @@
-"""Loading and validation of TOML configuration files (shakers, station)."""
+"""Loading and validation of TOML configuration files (shakers, DAQ devices, settings)."""
 
 from __future__ import annotations
 
@@ -48,16 +48,44 @@ class ShakerConfig:
     suspension_stiffness_n_per_mm: float
     armature_resonance_hz: float
     amp_input_full_v: float
+    max_drive_v: float                # hard clip of the drive (peak) at the amplifier input
+    max_drive_rms_v: float            # abort if the drive rms exceeds this
     sim: SimModelConfig = field(default_factory=SimModelConfig)
 
 
 @dataclass(frozen=True)
+class DaqLimits:
+    """Capabilities of a DAQ device type, from its data sheet. Settings are validated against these."""
+    ai_ranges_v: tuple[float, ...]
+    ao_ranges_v: tuple[float, ...]
+    ai_terminal_configs: tuple[str, ...]
+    ao_terminal_configs: tuple[str, ...]  # empty: fixed by the hardware, not configurable
+    ai_couplings: tuple[str, ...]
+    iepe_currents_ma: tuple[float, ...]   # selectable IEPE excitation currents, 0 = off
+    fs_min_hz: float                      # common AI/AO rate range
+    fs_max_hz: float
+    fs_allowed_hz: tuple[float, ...]      # if not empty, only these rates are allowed
+    timebase_hz: float                    # if > 0, timebase_hz / fs_io_hz must be an integer
+    antialias_filter: bool                # built-in AI anti-aliasing (delta-sigma ADC)
+    ao_sync: str                          # "sample_clock": AO uses ai/SampleClock;
+                                          # "start_trigger": AO starts on ai/StartTrigger
+    ao_on_demand: bool                    # AO supports software-timed (on-demand) writes
+    filter_delay_samples: float           # AO + AI converter filter delay in fs_io samples
+
+
+@dataclass(frozen=True)
 class DaqConfig:
+    model: str
+    limits: DaqLimits
     device: str = "Dev1"
     ao_channel: str = "ao0"
     ai_channel: str = "ai1"
     ai_terminal_config: str = "DIFF"
     ai_range_v: float = 10.0
+    ai_coupling: str = "DC"
+    iepe_current_ma: float = 0.0
+    ao_range_v: float = 10.0
+    ao_terminal_config: str = ""          # empty: driver default
     fs_io_hz: float = 100000.0
     decimation: int = 4
     ao_queue_blocks: int = 2
@@ -90,8 +118,6 @@ class ControlConfig:
 
 @dataclass(frozen=True)
 class SafetyConfig:
-    max_drive_v: float = 3.5
-    max_drive_rms_v: float = 1.5
     max_clip_fraction: float = 0.005
     payload_kg: float = 0.02
     displacement_sigma: float = 3.0
@@ -109,8 +135,8 @@ class PretestConfig:
 
 
 @dataclass(frozen=True)
-class StationConfig:
-    daq: DaqConfig = field(default_factory=DaqConfig)
+class Settings:
+    daq: DaqConfig
     sensor: SensorConfig = field(default_factory=SensorConfig)
     control: ControlConfig = field(default_factory=ControlConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
@@ -140,6 +166,21 @@ def build_dataclass(cls, table: dict, where: str):
         typ = hints[f.name]
         if dataclasses.is_dataclass(typ):
             value = build_dataclass(typ, value, f"{where}.{f.name}")
+        elif typing.get_origin(typ) is tuple:
+            if not isinstance(value, list):
+                raise ConfigError(f"{where}.{f.name}: expected a list, got {value!r}")
+            item = typing.get_args(typ)[0]
+            if item is float and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                                     for v in value):
+                value = tuple(float(v) for v in value)
+            elif item is str and all(isinstance(v, str) for v in value):
+                value = tuple(value)
+            else:
+                raise ConfigError(f"{where}.{f.name}: expected a list of {item.__name__}, "
+                                  f"got {value!r}")
+        elif typ is bool:
+            if not isinstance(value, bool):
+                raise ConfigError(f"{where}.{f.name}: expected true or false, got {value!r}")
         elif typ is float:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise ConfigError(f"{where}.{f.name}: expected a number, got {value!r}")
@@ -164,12 +205,17 @@ def read_toml(path: Path) -> dict:
         raise ConfigError(f"{path}: {exc}") from None
 
 
-def resolve_shaker_path(name_or_path: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> Path:
-    """Accept a shaker key (``tv51110``) or a path to a TOML file."""
+def resolve_config_path(name_or_path: str, kind: str,
+                        config_dir: Path = DEFAULT_CONFIG_DIR) -> Path:
+    """Accept a key (``tv51110``) or a path to a TOML file; keys resolve to ``<kind>/<key>.toml``."""
     p = Path(name_or_path)
     if p.suffix == ".toml" or p.exists():
         return p
-    return config_dir / "shakers" / f"{name_or_path.lower()}.toml"
+    return config_dir / kind / f"{name_or_path.lower()}.toml"
+
+
+def resolve_shaker_path(name_or_path: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> Path:
+    return resolve_config_path(name_or_path, "shakers", config_dir)
 
 
 def load_shaker(name_or_path: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> ShakerConfig:
@@ -177,31 +223,96 @@ def load_shaker(name_or_path: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> Sha
     cfg = build_dataclass(ShakerConfig, read_toml(path), str(path))
     for name in ("f_min_hz", "f_max_hz", "force_random_rms_n", "accel_random_rms_g",
                  "displacement_pp_mm", "velocity_peak_m_s", "moving_mass_kg",
-                 "armature_resonance_hz", "amp_input_full_v"):
+                 "armature_resonance_hz", "amp_input_full_v", "max_drive_v",
+                 "max_drive_rms_v"):
         if getattr(cfg, name) <= 0:
             raise ConfigError(f"{path}: {name} must be > 0")
+    if cfg.max_drive_rms_v > cfg.max_drive_v:
+        raise ConfigError(f"{path}: max_drive_rms_v must be <= max_drive_v")
+    if cfg.max_drive_rms_v > cfg.amp_input_full_v:
+        raise ConfigError(f"{path}: max_drive_rms_v must be <= amp_input_full_v "
+                          "(the amplifier input for full rating)")
     if cfg.f_min_hz >= cfg.f_max_hz:
         raise ConfigError(f"{path}: f_min_hz must be < f_max_hz")
     return cfg
 
 
-def load_station(path: Path | str | None = None) -> StationConfig:
-    path = Path(path) if path else DEFAULT_CONFIG_DIR / "station.toml"
-    cfg = build_dataclass(StationConfig, read_toml(path), str(path))
-    validate_station(cfg, str(path))
+def load_settings(path: Path | str | None = None, daq: str = "usb6211",
+                 config_dir: Path = DEFAULT_CONFIG_DIR) -> Settings:
+    """Load a settings file and combine it with the DAQ device profile ``daq``.
+
+    The settings file may have a ``[daq]`` table that overrides settings of the DAQ profile
+    (for example ``device`` or ``ai_channel``), but not its ``[limits]``.
+    """
+    path = Path(path) if path else DEFAULT_CONFIG_DIR / "settings.toml"
+    daq_path = resolve_config_path(daq, "daq", config_dir)
+    table = read_toml(path)
+    daq_table = read_toml(daq_path)
+    overrides = table.get("daq", {})
+    if not isinstance(overrides, dict) or "limits" in overrides or "model" in overrides:
+        raise ConfigError(f"{path}: [daq] may only override DAQ settings, not model or limits")
+    table = {**table, "daq": {**daq_table, **overrides}}
+    where = f"{path} + {daq_path}"
+    cfg = build_dataclass(Settings, table, where)
+    validate_settings(cfg, where)
     return cfg
 
 
-def validate_station(cfg: StationConfig, where: str = "station") -> None:
-    d, c, s = cfg.daq, cfg.control, cfg.safety
-    if d.ai_terminal_config.upper() not in ("DIFF", "RSE", "NRSE"):
-        raise ConfigError(f"{where}: daq.ai_terminal_config must be DIFF, RSE or NRSE")
-    if d.ai_range_v not in (0.2, 1.0, 5.0, 10.0):
-        raise ConfigError(f"{where}: daq.ai_range_v must be one of 0.2, 1, 5, 10 (USB-6211)")
-    if not 0 < d.fs_io_hz <= 250e3:
-        raise ConfigError(f"{where}: daq.fs_io_hz must be in (0, 250000] (USB-6211 limit)")
+def _one_of(value: float, allowed: tuple[float, ...]) -> bool:
+    return any(abs(value - a) <= 1e-6 * max(abs(a), 1.0) for a in allowed)
+
+
+def _fmt(values) -> str:
+    return ", ".join(f"{v:g}" if isinstance(v, float) else str(v) for v in values)
+
+
+def validate_daq(d: DaqConfig, where: str = "daq") -> None:
+    lim = d.limits
+    if lim.ao_sync not in ("sample_clock", "start_trigger"):
+        raise ConfigError(f"{where}: limits.ao_sync must be sample_clock or start_trigger")
+    if d.ai_terminal_config.upper() not in lim.ai_terminal_configs:
+        raise ConfigError(f"{where}: daq.ai_terminal_config must be one of "
+                          f"{_fmt(lim.ai_terminal_configs)} ({d.model})")
+    if not _one_of(d.ai_range_v, lim.ai_ranges_v):
+        raise ConfigError(f"{where}: daq.ai_range_v must be one of {_fmt(lim.ai_ranges_v)} "
+                          f"({d.model})")
+    if d.ao_terminal_config and d.ao_terminal_config.upper() not in lim.ao_terminal_configs:
+        raise ConfigError(f"{where}: daq.ao_terminal_config must be "
+                          + (f"one of {_fmt(lim.ao_terminal_configs)}" if lim.ao_terminal_configs
+                             else "empty (not configurable)") + f" ({d.model})")
+    if not _one_of(d.ao_range_v, lim.ao_ranges_v):
+        raise ConfigError(f"{where}: daq.ao_range_v must be one of {_fmt(lim.ao_ranges_v)} "
+                          f"({d.model})")
+    if d.ai_coupling.upper() not in lim.ai_couplings:
+        raise ConfigError(f"{where}: daq.ai_coupling must be one of {_fmt(lim.ai_couplings)} "
+                          f"({d.model})")
+    if not _one_of(d.iepe_current_ma, (0.0, *lim.iepe_currents_ma)):
+        raise ConfigError(f"{where}: daq.iepe_current_ma must be one of "
+                          f"{_fmt((0.0, *lim.iepe_currents_ma))} ({d.model})")
+    if d.iepe_current_ma > 0 and d.ai_coupling.upper() != "AC":
+        raise ConfigError(f"{where}: daq.ai_coupling must be AC when IEPE excitation is on "
+                          "(the sensor bias voltage would use up the AI range)")
+    if not lim.fs_min_hz <= d.fs_io_hz <= lim.fs_max_hz:
+        raise ConfigError(f"{where}: daq.fs_io_hz must be in [{lim.fs_min_hz:g}, "
+                          f"{lim.fs_max_hz:g}] ({d.model})")
+    if lim.fs_allowed_hz and not _one_of(d.fs_io_hz, lim.fs_allowed_hz):
+        raise ConfigError(f"{where}: daq.fs_io_hz must be one of {_fmt(lim.fs_allowed_hz)} "
+                          f"({d.model})")
+    if lim.timebase_hz > 0:
+        n = lim.timebase_hz / d.fs_io_hz
+        if abs(n - round(n)) > 1e-9 * n:
+            raise ConfigError(f"{where}: daq.fs_io_hz must divide {lim.timebase_hz:g} exactly "
+                              f"({d.model})")
     if d.decimation < 1:
         raise ConfigError(f"{where}: daq.decimation must be >= 1")
+    if not lim.antialias_filter and d.decimation < 2:
+        raise ConfigError(f"{where}: daq.decimation must be >= 2: the {d.model} has no "
+                          "anti-aliasing filter, so AI must be oversampled and filtered digitally")
+
+
+def validate_settings(cfg: Settings, where: str = "settings") -> None:
+    d, c, s = cfg.daq, cfg.control, cfg.safety
+    validate_daq(d, where)
     if d.ao_queue_blocks < 1:
         raise ConfigError(f"{where}: daq.ao_queue_blocks must be >= 1")
     if c.frame_size < 256 or c.frame_size % 2:
@@ -212,11 +323,18 @@ def validate_station(cfg: StationConfig, where: str = "station") -> None:
         raise ConfigError(f"{where}: control.dof/control_dof must be >= 2, frf_averages >= 1")
     if c.start_level_db > 0 or c.level_step_db <= 0:
         raise ConfigError(f"{where}: control.start_level_db must be <= 0 and level_step_db > 0")
-    if not 0 < s.max_drive_v <= 10:
-        raise ConfigError(f"{where}: safety.max_drive_v must be in (0, 10] V")
-    if not 0 < s.max_drive_rms_v <= s.max_drive_v:
-        raise ConfigError(f"{where}: safety.max_drive_rms_v must be in (0, max_drive_v]")
     if cfg.sensor.sensitivity_mv_per_g <= 0:
         raise ConfigError(f"{where}: sensor.sensitivity_mv_per_g must be > 0")
-    if cfg.pretest.drive_rms_v <= 0 or cfg.pretest.drive_rms_v > s.max_drive_rms_v:
-        raise ConfigError(f"{where}: pretest.drive_rms_v must be in (0, safety.max_drive_rms_v]")
+    if cfg.pretest.drive_rms_v <= 0:
+        raise ConfigError(f"{where}: pretest.drive_rms_v must be > 0")
+
+
+def validate_setup(settings: Settings, shaker: ShakerConfig) -> None:
+    """Checks that need both the shaker (amplifier drive limits) and the settings/DAQ."""
+    d = settings.daq
+    if shaker.max_drive_v > d.ao_range_v:
+        raise ConfigError(f"{shaker.name}: max_drive_v = {shaker.max_drive_v:g} V exceeds the "
+                          f"{d.model} AO range daq.ao_range_v = {d.ao_range_v:g} V")
+    if settings.pretest.drive_rms_v > shaker.max_drive_rms_v:
+        raise ConfigError(f"pretest.drive_rms_v = {settings.pretest.drive_rms_v:g} V exceeds "
+                          f"{shaker.name} max_drive_rms_v = {shaker.max_drive_rms_v:g} V")

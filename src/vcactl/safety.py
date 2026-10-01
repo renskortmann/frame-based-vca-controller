@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config import ShakerConfig, StationConfig
+from .config import ShakerConfig, Settings
 from .profile import G, Profile
 
 
@@ -37,17 +37,17 @@ class PreflightReport:
         return "\n".join(lines)
 
 
-def preflight(profile: Profile, shaker: ShakerConfig, station: StationConfig,
+def preflight(profile: Profile, shaker: ShakerConfig, settings: Settings,
               level_db: float = 0.0) -> PreflightReport:
-    """Check a profile at ``level_db`` against the shaker and station limits before any output."""
+    """Check a profile at ``level_db`` against the shaker and settings limits before any output."""
     k = 10 ** (level_db / 20)                 # amplitude factor
-    sigma = station.safety.displacement_sigma
-    fs = station.fs_control_hz
-    df = fs / station.control.frame_size
+    sigma = settings.safety.displacement_sigma
+    fs = settings.fs_control_hz
+    df = fs / settings.control.frame_size
     a_rms = profile.accel_rms_g() * k
     v_pk = profile.velocity_rms_m_s() * k * sigma
     d_pp_mm = 2 * profile.displacement_rms_m() * k * sigma * 1e3
-    mass = shaker.moving_mass_kg + station.safety.payload_kg
+    mass = shaker.moving_mass_kg + settings.safety.payload_kg
     force = mass * a_rms * G
 
     def check(name, value, limit, unit, ok=None):
@@ -71,9 +71,9 @@ def preflight(profile: Profile, shaker: ShakerConfig, station: StationConfig,
 class RuntimeMonitor:
     """Per-block checks. Each method raises AbortError when a limit is violated."""
 
-    def __init__(self, station: StationConfig, shaker: ShakerConfig):
-        self.s = station.safety
-        self.ai_range = station.daq.ai_range_v
+    def __init__(self, settings: Settings, shaker: ShakerConfig):
+        self.s = settings.safety
+        self.ai_range = settings.daq.ai_range_v
         self.shaker = shaker
         self.low_response_blocks = 0
 
@@ -81,12 +81,12 @@ class RuntimeMonitor:
         if ai_peak_v >= self.s.ai_overload_fraction * self.ai_range:
             raise AbortError(f"AI overload: {ai_peak_v:.2f} V on the {self.ai_range:g} V range "
                              "(check charge amplifier range/sensitivity)")
-        if drive_rms_v > self.s.max_drive_rms_v:
+        if drive_rms_v > self.shaker.max_drive_rms_v:
             raise AbortError(f"drive rms {drive_rms_v:.3f} V exceeds limit "
-                             f"{self.s.max_drive_rms_v:.3f} V")
+                             f"{self.shaker.max_drive_rms_v:.3f} V")
         if clip_fraction > self.s.max_clip_fraction:
             raise AbortError(f"drive clipping: {100 * clip_fraction:.2f}% of samples at "
-                             f"+/-{self.s.max_drive_v:g} V")
+                             f"+/-{self.shaker.max_drive_v:g} V")
 
     def check_response(self, response_rms_g: float) -> None:
         if response_rms_g > self.shaker.accel_random_rms_g:
