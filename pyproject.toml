@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 plot = ["matplotlib>=3.5"]
+report = ["matplotlib>=3.5", "reportlab>=3.6", "python-pptx>=1.0"]   # tools/shaker_comparison.py, tools/client_options_deck.py
 test = ["pytest>=7"]
 
 [project.scripts]

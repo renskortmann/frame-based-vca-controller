@@ -60,7 +60,9 @@ cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is o
   table of payload limits for flat profiles from 20 Hz to f_max (columns: 0.001/0.01/0.05 g2/Hz,
   labelled by the 3 sigma peak-peak stroke they need), also capped by stroke for vertical mounting
   (sag + half the vibration stroke <= half-stroke). Regenerate the tables when the force rating,
-  moving mass, stiffness or stroke changes.
+  moving mass, stiffness or stroke changes, and rebuild `docs/shaker_comparison.pdf` with
+  `tools/shaker_comparison.py` (same calculation; amplifier/cooling/mass facts that are not in
+  the shaker files are in its `EXTRA` table).
 - Static sag is not subtracted from the usable displacement in the pre-flight check.
 
 ### TIRA TV 51110 / TV 52110 + BDA 120
@@ -100,6 +102,25 @@ cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is o
   = 70 g rms. `bl_n_per_a = 17.2` is 1 / head constant (58 mm/Vs).
 - `f_min_hz = 5`: the 2707 gives full current only from 40 Hz (11 A at and below 5 Hz).
   `f_max_hz = 10000`: the 2707 full-output limit; the head resonance is at 7.2 kHz.
+
+## Documents outside the repo
+
+- Project folder (Nextcloud, synced; anything written there is shared):
+  `C:\Users\rkortmann\Nextcloud\CITG-macrolab\Projecten\HF Shakers (Alessandro)`,
+  in WSL `/mnt/c/Users/rkortmann/Nextcloud/CITG-macrolab/Projecten/HF Shakers (Alessandro)`.
+  It also holds the datasheets, the VR9700 datasheet and the project's RFQ documents.
+- Presentation for the researcher (the user's colleague in the same department; the user is the lab
+  engineer supporting them): `shaker_controller_options_draft.pptx` in that folder.
+  - The user edits it by hand in PowerPoint. Always edit that file (python-pptx on a copy, then copy
+    back); never regenerate it with `tools/client_options_deck.py`, which only built the first draft
+    (with € prices and a client tone that were later removed) and would overwrite the edits.
+  - Before writing it back, check for a `~$shaker_controller_options_draft.pptx` lock file: if it
+    exists, the deck is open in PowerPoint and must be closed first.
+  - Tone: colleague to colleague ("the lab", "you"). Hardware is given in € (indicative, excl.
+    VAT; assumptions in the speaker notes); development work only as low / medium / high, never
+    in hours or rates.
+  - The 4801/4812 + 2707 runs on 230 V single-phase mains at the lab (the 4801 manual lists
+    380 V three-phase for the body; the user confirmed single-phase).
 
 ## Status
 

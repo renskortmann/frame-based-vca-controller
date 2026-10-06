@@ -81,6 +81,18 @@ Plot a run afterwards:
 python tools/plot_run.py runs/<run-dir>                  # add --save out.png for a file
 ```
 
+`docs/shaker_comparison.pdf` compares the configured shakers (ratings, amplifier and drive limits,
+payload limits). Rebuild it after changing a shaker file:
+
+```
+pip install -e ".[report]"
+python tools/shaker_comparison.py                        # writes docs/shaker_comparison.pdf
+```
+
+`tools/client_options_deck.py` builds a draft client presentation (.pptx) on shaker and
+controller options from the same shaker data. Its prices, hours and labour rate are assumptions
+in the script; check them before using the deck.
+
 Each run directory contains:
 
 - `meta.json`: all configs.
