@@ -2,26 +2,34 @@
 
 `vcactl` runs closed-loop **random vibration** tests on a TIRA **TV 51110** or **TV 52110**
 (each with a BDA 120 power amplifier), a **BK 4809** with a BK 2718 amplifier, or a **BK 4801**
-body with **4812** general purpose head and a BK 2707 amplifier. The drive goes out through an **NI USB-6211**, **NI USB-4431** or **NI PXIe-4468**,
-and the loop is closed with an accelerometer on a charge amplifier (or an IEPE accelerometer
-on the USB-4431/PXIe-4468). The
-control band reaches **7 kHz**. It runs on **Windows 11** and **native Linux**, and includes a
-simulated shaker for development without hardware.
+body with **4812** general purpose head and a BK 2707 amplifier. The drive goes out through an
+**NI USB-4431**, **NI PXIe-4468** or **NI USB-6211**, and the loop is always closed with an
+**IEPE accelerometer**, whichever DAQ is used. The control band reaches **7 kHz**. It runs on
+**Windows 11** and **native Linux**, and includes a simulated shaker for development without
+hardware.
 
 > WSL2 cannot run NI-DAQmx because the driver needs native kernel/USB access. Under WSL2, use
 > `--sim` only.
 
 ## Hardware setup
 
+The control sensor is always an IEPE accelerometer, mounted on the shaker table or fixture next to
+the specimen. How it is powered depends on the DAQ:
+
+- **USB-4431 / PXIe-4468:** connect the accelerometer directly to AI 0 (BNC) and switch on the
+  DAQ's IEPE excitation with `iepe_current_ma` in the DAQ profile (`config/daq/*.toml`): 2.1 mA on
+  the USB-4431, 4, 10 or 20 mA on the PXIe-4468. IEPE needs `ai_coupling = "AC"`. Check that the
+  accelerometer works at the chosen current (2.1 mA is below the 4 mA many sensors are specified at).
+  Connect AO 0 to the amplifier input.
+- **USB-6211:** it has no IEPE excitation, so an external IEPE signal conditioner powers the
+  accelerometer and its output goes to the DAQ (wiring below). Leave the conditioner's output
+  AC-coupled, so that the IEPE bias voltage does not reach the DC-coupled USB-6211 input.
+
 | USB-6211 terminal | Connect to |
 |---|---|
-| AO 0 (pin 12) / AO GND (pin 14) | BDA 120 signal input (BNC) |
-| AI 1 (pin 17) / AI 9 (pin 18) | charge amplifier output: signal / reference (differential) |
-| AI GND (pin 28) | if the charge amplifier output is **floating** (battery powered): 10–100 kΩ from AI 9 to AI GND |
-
-The table is for the USB-6211. On the USB-4431 and PXIe-4468 (BNC), connect AO 0 to the amplifier
-input and AI 0 to the charge amplifier output, or connect an IEPE accelerometer directly to AI 0
-and set `iepe_current_ma` in the DAQ profile (`config/daq/*.toml`).
+| AO 0 (pin 12) / AO GND (pin 14) | amplifier signal input (BNC) |
+| AI 1 (pin 17) / AI 9 (pin 18) | IEPE conditioner output: signal / reference (differential) |
+| AI GND (pin 28) | if the conditioner output is **floating** (battery powered): 10–100 kΩ from AI 9 to AI GND |
 
 Power sequence, which matters because the USB-6211 AO glitches by about ±1 V for 200 ms at power-on
 (the USB-4431 AO also glitches at power-on):
@@ -32,10 +40,10 @@ Power sequence, which matters because the USB-6211 AO glitches by about ±1 V fo
 3. When finished, switch the amplifier **off before** unplugging USB or shutting down the PC.
 
 Set `sensor.sensitivity_mv_per_g` in `config/settings.toml` to the sensitivity of the measurement
-chain at the DAQ input, in mV/g. With a charge amplifier, this is its output setting in mV/g (not
-its mV/pC gain). With IEPE, it is the accelerometer's calibrated sensitivity. With a charge
-amplifier, choose the output setting so the expected peak response (about 4–5 × rms) stays inside
-`daq.ai_range_v`. With IEPE, choose the AI range to suit the accelerometer.
+chain at the DAQ input, in mV/g: the accelerometer's calibrated sensitivity, multiplied by the
+conditioner gain if the conditioner has one (USB-6211). Choose the accelerometer (and the
+conditioner gain) so that the expected peak response (about 4–5 × rms) stays inside
+`daq.ai_range_v`, and inside the input range of any other instrument that shares the signal.
 For example, 10 mV/g at 30 g rms gives peaks around 1.5 V on the 10 V range.
 
 ## Installation
