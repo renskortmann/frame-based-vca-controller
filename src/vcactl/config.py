@@ -132,6 +132,16 @@ class ControlConfig:
 
 
 @dataclass(frozen=True)
+class SineConfig:
+    correction_gain: float = 0.15      # fraction of the amplitude error (dB) corrected per block
+                                       # (> 0.25 overshoots: loop delay is about 4 blocks)
+    max_step_db: float = 1.0           # max correction per block
+    max_correction_db: float = 20.0    # max accumulated correction relative to the pretest FRF
+    ramp_s: float = 2.0                # ramp from control.start_level_db at start / after ring-down
+    settled_blocks: int = 3            # stepped sine: blocks within alarm_db before the dwell
+
+
+@dataclass(frozen=True)
 class SafetyConfig:
     max_clip_fraction: float = 0.005
     payload_kg: float = 0.02
@@ -154,6 +164,7 @@ class Settings:
     daq: DaqConfig
     sensor: SensorConfig = field(default_factory=SensorConfig)
     control: ControlConfig = field(default_factory=ControlConfig)
+    sine: SineConfig = field(default_factory=SineConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     pretest: PretestConfig = field(default_factory=PretestConfig)
 
@@ -350,6 +361,13 @@ def validate_settings(cfg: Settings, where: str = "settings") -> None:
             raise ConfigError(f"{where}: sensor.range_min_mm must be < range_max_mm")
         if sn.f_max_hz <= 0:
             raise ConfigError(f"{where}: sensor.f_max_hz must be > 0")
+    sc = cfg.sine
+    if not 0 < sc.correction_gain <= 1:
+        raise ConfigError(f"{where}: sine.correction_gain must be in (0, 1]")
+    if sc.max_step_db <= 0 or sc.max_correction_db <= 0 or sc.ramp_s <= 0 \
+            or sc.settled_blocks < 1:
+        raise ConfigError(f"{where}: sine.max_step_db, max_correction_db and ramp_s must be > 0, "
+                          "settled_blocks >= 1")
     if cfg.pretest.drive_rms_v <= 0:
         raise ConfigError(f"{where}: pretest.drive_rms_v must be > 0")
 

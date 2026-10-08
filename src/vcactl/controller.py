@@ -18,6 +18,7 @@ segment's level, so averages remain valid across level steps.
 from __future__ import annotations
 
 import math
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
@@ -105,8 +106,13 @@ class RunResult:
     log_dir: str | None
 
 
-class Controller:
-    def __init__(self, settings: Settings, shaker: ShakerConfig, profile: Profile,
+class ControllerBase:
+    """I/O loop, histories, noise floor and pretest shared by the random and sine controllers.
+
+    Subclasses implement ``_closed_loop`` and may override the other hooks.
+    """
+
+    def __init__(self, settings: Settings, shaker: ShakerConfig, profile,
                  backend: DaqBackend, *, target_level_db: float = 0.0,
                  duration_s: float | None = None, logger: RunLogger | None = None,
                  seed: int | None = None,
@@ -128,8 +134,8 @@ class Controller:
 
         self.spec = Spectrum(self.N, self.fs)
         self.freqs, self.df = self.spec.freqs, self.spec.df
-        self.band = (self.freqs >= profile.f_lo) & (self.freqs <= profile.f_hi)
-        self.s_ref = profile.psd(self.freqs)          # at 0 dB
+        self.band_lo, self.band_hi = self._pretest_band()
+        self.band = (self.freqs >= self.band_lo) & (self.freqs <= self.band_hi)
         self.sensor = settings.sensor
         self.displacement = self.sensor.type == "displacement"
         self.v_per_g = self.sensor.sensitivity_mv_per_g / 1000
@@ -145,7 +151,7 @@ class Controller:
                       + round(d.limits.filter_delay_samples / self.R))
 
         self.gen = RandomDriveGenerator(self.N, self.fs, np.random.default_rng(seed))
-        cap = 4 * self.N + self.delay + (self.P + 2) * self.half
+        self.hist_cap = cap = 4 * self.N + self.delay + (self.P + 2) * self.half
         self.drive_hist = History(cap)
         self.seg_hist = History(cap, dtype=np.int64)
         self.resp_hist = History(cap)
@@ -159,7 +165,6 @@ class Controller:
         self.seg_level = {0: 0.0}
         self.seg_kind = {0: "silence"}
         self.seg_frames: dict[int, int] = defaultdict(int)
-        self.corr_db = np.zeros(len(self.freqs))
         self.level_db = target_level_db
         self.state = State.IDLE
         self.samples = 0
@@ -167,7 +172,7 @@ class Controller:
         self.monitor = RuntimeMonitor(settings, shaker)
         self.stop_requested = False
         self._drive_psd = np.zeros(len(self.freqs))
-        self._abort_lines_blocks = 0
+        self.track_spectra = True        # False: only the response history is kept
         self.last_eval: Evaluation | None = None
 
     # ------------------------------------------------------------------ helpers
@@ -181,18 +186,17 @@ class Controller:
         self.seg_level[self.seg] = level_lin
         return self.seg
 
-    def _set_level(self, level_db: float) -> None:
-        self.level_db = level_db
-        self._new_segment("run", 10 ** (level_db / 10))
-
     def _step(self, psd_norm: np.ndarray, envelope: np.ndarray | None = None) -> StepResult:
-        """Generate, write and read one half-frame; update spectra."""
-        seg = self.seg
-        x = self.gen.next_block(psd_norm * self.seg_level[seg])
+        """Generate one half-frame of random drive, write it and read the response."""
+        x = self.gen.next_block(psd_norm * self.seg_level[self.seg])
         if envelope is not None:
             x = x * envelope
+        return self._io(x)
+
+    def _io(self, x: np.ndarray) -> StepResult:
+        """Write one half-frame of drive (control rate, V), read the response, update spectra."""
         self.drive_hist.append(x)
-        self.seg_hist.append(np.full(self.half, seg))
+        self.seg_hist.append(np.full(self.half, self.seg))
 
         y = self.interp.process(x)
         lim = self.shaker.max_drive_v
@@ -229,7 +233,7 @@ class Controller:
             Y *= self.y_weight
             self._frame_rms_g = self._band_rms(np.abs(Y) ** 2 * self.spec.scale)
         start = m - self.N - self.delay
-        if start < 0:
+        if start < 0 or not self.track_spectra:
             return
         x = self.drive_hist.get(start, start + self.N)
         segs = self.seg_hist.get(start, start + self.N)
@@ -252,8 +256,8 @@ class Controller:
     def _band_rms(self, psd: np.ndarray) -> float:
         return float(np.sqrt(np.sum(psd[self.band]) * self.df))
 
-    def _run_drive_psd(self) -> np.ndarray:
-        """Drive PSD (V^2/Hz at 0 dB) = C * S_ref / |H|^2, with a regularized |H|."""
+    def _h2_band(self) -> np.ndarray:
+        """|H|^2 on the band lines, interpolated where coherence is low and floored."""
         b = self.band
         h2 = np.abs(self.frf.h1[b]) ** 2
         ok = (self.frf.coherence[b] >= self.c.coherence_min) & (h2 > 0)
@@ -264,10 +268,179 @@ class Controller:
             fb = self.freqs[b]
             log_h2[~ok] = np.interp(fb[~ok], fb[ok], log_h2[ok])
         h2 = np.exp(log_h2)
-        h2 = np.maximum(h2, h2.max() * 10 ** (-self.c.h_dynamic_range_db / 10))
+        return np.maximum(h2, h2.max() * 10 ** (-self.c.h_dynamic_range_db / 10))
+
+    # hooks for the test type
+    def _pretest_band(self) -> tuple[float, float]:
+        """Band of the pretest FRF (and of the random control)."""
+        return self.profile.f_lo, self.profile.f_hi
+
+    def _closed_loop(self) -> None:
+        raise NotImplementedError
+
+    def _check_predicted_drive(self) -> None:
+        """After the pretest: abort if the test needs more drive than the shaker allows."""
+
+    def _report(self, sd: StepResult, ev) -> None:
+        pass
+
+    def _final_snapshot(self) -> None:
+        pass
+
+    def _check_stop(self) -> None:
+        if self.stop_requested:
+            raise OperatorStop("stopped by operator")
+
+    # ------------------------------------------------------------------ phases
+    def _noise_phase(self) -> None:
+        self.state = State.NOISE
+        zeros = np.zeros(len(self.freqs))
+        self.seg = 0
+        while self.noise.count < self.settings.pretest.noise_blocks:
+            self._check_stop()
+            sd = self._step(zeros)
+            self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            self.monitor.check_sensor_range(sd.disp_min_mm, sd.disp_max_mm)
+
+    def _pretest_phase(self) -> None:
+        self.state = State.PRETEST
+        pt = self.settings.pretest
+        seg = self._new_segment("pretest", 1.0)
+        psd = flat_psd(self.freqs, self.band_lo, self.band_hi, pt.drive_rms_v)
+        self._drive_psd = psd
+        while self.seg_frames[seg] < pt.frames:
+            self._check_stop()
+            sd = self._step(psd)
+            self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            self.monitor.check_sensor_range(sd.disp_min_mm, sd.disp_max_mm)
+            self.monitor.check_response(sd.block_rms_g)
+            self._report(sd, None)
+
+        b = self.band
+        resp_rms = self._band_rms(self.frf.gyy)
+        noise_rms = self._band_rms(self.noise.value)
+        snr_db = 20 * math.log10(resp_rms / noise_rms) if noise_rms > 0 else math.inf
+        coh_mean = float(np.mean(self.frf.coherence[b]))
+        self.pretest_info = {"response_rms_g": resp_rms, "noise_rms_g": noise_rms,
+                             "snr_db": snr_db, "coherence_mean": coh_mean}
+        if self.logger:
+            self.logger.spectra("pretest_frf", self.freqs, {
+                "h_mag_g_per_v": np.abs(self.frf.h1), "h_phase_deg": np.degrees(np.angle(self.frf.h1)),
+                "coherence": self.frf.coherence, "drive_v2_hz": self.frf.gxx,
+                "response_g2_hz": self.frf.gyy, "noise_g2_hz": self.noise.value})
+        chain = ("laser sensor, conditioner, mm_per_v" if self.displacement
+                 else "accelerometer, charge amplifier")
+        if snr_db < pt.min_snr_db:
+            raise AbortError(f"pretest: response {resp_rms:.3g} g rms is only {snr_db:.1f} dB above "
+                             f"the noise floor (check {chain}, amplifier)")
+        if coh_mean < self.c.coherence_min:
+            raise AbortError(f"pretest: mean coherence {coh_mean:.2f} < {self.c.coherence_min}")
+        self._check_predicted_drive()
+
+    def _rampdown(self, seconds: float) -> None:
+        """Fade the random drive to zero, then flush the AO queue with zeros."""
+        psd_norm = self._drive_psd
+        self.state = State.RAMPDOWN
+        self._new_segment("rampdown", self.seg_level[self.seg])
+        n_blocks = max(1, math.ceil(seconds * self.fs / self.half))
+        env = np.linspace(1.0, 0.0, n_blocks * self.half)
+        for i in range(n_blocks):
+            sd = self._step(psd_norm, env[i * self.half:(i + 1) * self.half])
+            self.monitor.check_io(sd.ai_peak_v, 0.0, 0.0)
+        self.gen.reset()
+        self._new_segment("silence", 0.0)
+        zeros = np.zeros(len(self.freqs))
+        for _ in range(self.P + 2):
+            self._step(zeros)
+
+    # ------------------------------------------------------------------ entry
+    def run(self, pretest_only: bool = False) -> RunResult:
+        report = preflight(self.profile, self.shaker, self.settings, self.target_level_db)
+        if not report.ok:
+            return self._result(False, State.ABORTED, "pre-flight check failed:\n" + report.format())
+
+        reason, completed = "completed", False
+        self.t0_wall = time.time()      # stream start, for wall-clock event times (approximate)
+        self.backend.start(np.zeros(self.P * self.block_io))
+        self.drive_hist.append(np.zeros(self.P * self.half))
+        self.seg_hist.append(np.zeros(self.P * self.half, dtype=np.int64))
+        try:
+            try:
+                self._noise_phase()
+                self._pretest_phase()
+                if pretest_only:
+                    reason = "pretest completed"
+                else:
+                    self._closed_loop()
+                self._final_snapshot()
+                self._rampdown(self.c.rampdown_s)
+                completed = True
+                self.state = State.DONE
+            except OperatorStop as exc:
+                reason = str(exc)
+                self._final_snapshot()
+                self._rampdown(self.c.rampdown_s)
+                self.state = State.ABORTED
+            except AbortError as exc:
+                reason = f"ABORT: {exc}"
+                self._final_snapshot()
+                self._rampdown(self.s.abort_rampdown_s)
+                self.state = State.ABORTED
+        except DaqFault as exc:
+            reason = f"DAQ fault: {exc}" if reason == "completed" else \
+                f"{reason}; DAQ fault during ramp-down: {exc}"
+            completed = False
+            self.state = State.ABORTED
+        except AbortError as exc:   # raised again during ramp-down
+            reason = f"{reason}; {exc} during ramp-down"
+            completed = False
+            self.state = State.ABORTED
+        finally:
+            self.backend.stop()
+        return self._result(completed, self.state, reason)
+
+    def _result(self, completed: bool, state: State, reason: str) -> RunResult:
+        ev = self.last_eval
+        return RunResult(completed=completed, state=state, reason=reason,
+                         run_time_s=self.run_time_s,
+                         ref_rms_g=ev.ref_rms_g if ev else None,
+                         meas_rms_g=ev.meas_rms_g if ev else None,
+                         rms_err_db=ev.rms_err_db if ev else None,
+                         log_dir=str(self.logger.dir) if self.logger else None)
+
+
+class Controller(ControllerBase):
+    """Closed-loop random control (see the module docstring)."""
+
+    def __init__(self, settings: Settings, shaker: ShakerConfig, profile: Profile,
+                 backend: DaqBackend, **kwargs):
+        super().__init__(settings, shaker, profile, backend, **kwargs)
+        self.s_ref = profile.psd(self.freqs)          # at 0 dB
+        self.corr_db = np.zeros(len(self.freqs))
+        self._abort_lines_blocks = 0
+
+    def _set_level(self, level_db: float) -> None:
+        self.level_db = level_db
+        self._new_segment("run", 10 ** (level_db / 10))
+
+    def _run_drive_psd(self) -> np.ndarray:
+        """Drive PSD (V^2/Hz at 0 dB) = C * S_ref / |H|^2, with a regularized |H|."""
+        b = self.band
         psd = np.zeros(len(self.freqs))
-        psd[b] = self.s_ref[b] * 10 ** (self.corr_db[b] / 10) / h2
+        psd[b] = self.s_ref[b] * 10 ** (self.corr_db[b] / 10) / self._h2_band()
         return psd
+
+    def _check_predicted_drive(self) -> None:
+        full = self._run_drive_psd() * 10 ** (self.target_level_db / 10)
+        drive_rms = float(np.sqrt(np.sum(full) * self.df))
+        self.pretest_info["predicted_drive_rms_v"] = drive_rms
+        limit = min(self.shaker.max_drive_rms_v, self.shaker.max_drive_v / 3)
+        if drive_rms > limit:
+            raise AbortError(f"pretest: profile needs about {drive_rms:.2f} V rms drive at the target "
+                             f"level; limit is {limit:.2f} V rms (max_drive_rms_v, max_drive_v/3)")
+
+    def _final_snapshot(self) -> None:
+        self._snapshot("psd_final")
 
     def _correct(self) -> None:
         b = self.band
@@ -335,63 +508,6 @@ class Controller:
             "h_phase_deg": np.degrees(np.angle(h)), "coherence": coh,
             "correction_db": self.corr_db})
 
-    def _check_stop(self) -> None:
-        if self.stop_requested:
-            raise OperatorStop("stopped by operator")
-
-    # ------------------------------------------------------------------ phases
-    def _noise_phase(self) -> None:
-        self.state = State.NOISE
-        zeros = np.zeros(len(self.freqs))
-        self.seg = 0
-        while self.noise.count < self.settings.pretest.noise_blocks:
-            self._check_stop()
-            sd = self._step(zeros)
-            self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
-            self.monitor.check_sensor_range(sd.disp_min_mm, sd.disp_max_mm)
-
-    def _pretest_phase(self) -> None:
-        self.state = State.PRETEST
-        pt = self.settings.pretest
-        seg = self._new_segment("pretest", 1.0)
-        psd = flat_psd(self.freqs, self.profile.f_lo, self.profile.f_hi, pt.drive_rms_v)
-        self._drive_psd = psd
-        while self.seg_frames[seg] < pt.frames:
-            self._check_stop()
-            sd = self._step(psd)
-            self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
-            self.monitor.check_sensor_range(sd.disp_min_mm, sd.disp_max_mm)
-            self.monitor.check_response(sd.block_rms_g)
-            self._report(sd, None)
-
-        b = self.band
-        resp_rms = self._band_rms(self.frf.gyy)
-        noise_rms = self._band_rms(self.noise.value)
-        snr_db = 20 * math.log10(resp_rms / noise_rms) if noise_rms > 0 else math.inf
-        coh_mean = float(np.mean(self.frf.coherence[b]))
-        self.pretest_info = {"response_rms_g": resp_rms, "noise_rms_g": noise_rms,
-                             "snr_db": snr_db, "coherence_mean": coh_mean}
-        if self.logger:
-            self.logger.spectra("pretest_frf", self.freqs, {
-                "h_mag_g_per_v": np.abs(self.frf.h1), "h_phase_deg": np.degrees(np.angle(self.frf.h1)),
-                "coherence": self.frf.coherence, "drive_v2_hz": self.frf.gxx,
-                "response_g2_hz": self.frf.gyy, "noise_g2_hz": self.noise.value})
-        chain = ("laser sensor, conditioner, mm_per_v" if self.displacement
-                 else "accelerometer, charge amplifier")
-        if snr_db < pt.min_snr_db:
-            raise AbortError(f"pretest: response {resp_rms:.3g} g rms is only {snr_db:.1f} dB above "
-                             f"the noise floor (check {chain}, amplifier)")
-        if coh_mean < self.c.coherence_min:
-            raise AbortError(f"pretest: mean coherence {coh_mean:.2f} < {self.c.coherence_min}")
-
-        full = self._run_drive_psd() * 10 ** (self.target_level_db / 10)
-        drive_rms = float(np.sqrt(np.sum(full) * self.df))
-        self.pretest_info["predicted_drive_rms_v"] = drive_rms
-        limit = min(self.shaker.max_drive_rms_v, self.shaker.max_drive_v / 3)
-        if drive_rms > limit:
-            raise AbortError(f"pretest: profile needs about {drive_rms:.2f} V rms drive at the target "
-                             f"level; limit is {limit:.2f} V rms (max_drive_rms_v, max_drive_v/3)")
-
     def _closed_loop(self) -> None:
         c, tol = self.c, self.profile.tolerance
         target = self.target_level_db
@@ -442,72 +558,3 @@ class Controller:
             self._report(sd, ev)
             if self.state == State.RUN and self.run_time_s >= self.duration_s:
                 return
-
-    def _rampdown(self, seconds: float, psd_norm: np.ndarray) -> None:
-        """Fade the drive to zero, then flush the AO queue with zeros."""
-        self.state = State.RAMPDOWN
-        self._new_segment("rampdown", self.seg_level[self.seg])
-        n_blocks = max(1, math.ceil(seconds * self.fs / self.half))
-        env = np.linspace(1.0, 0.0, n_blocks * self.half)
-        for i in range(n_blocks):
-            sd = self._step(psd_norm, env[i * self.half:(i + 1) * self.half])
-            self.monitor.check_io(sd.ai_peak_v, 0.0, 0.0)
-        self.gen.reset()
-        self._new_segment("silence", 0.0)
-        zeros = np.zeros(len(self.freqs))
-        for _ in range(self.P + 2):
-            self._step(zeros)
-
-    # ------------------------------------------------------------------ entry
-    def run(self, pretest_only: bool = False) -> RunResult:
-        report = preflight(self.profile, self.shaker, self.settings, self.target_level_db)
-        if not report.ok:
-            return self._result(False, State.ABORTED, "pre-flight check failed:\n" + report.format())
-
-        reason, completed = "completed", False
-        self.backend.start(np.zeros(self.P * self.block_io))
-        self.drive_hist.append(np.zeros(self.P * self.half))
-        self.seg_hist.append(np.zeros(self.P * self.half, dtype=np.int64))
-        try:
-            try:
-                self._noise_phase()
-                self._pretest_phase()
-                if pretest_only:
-                    reason = "pretest completed"
-                else:
-                    self._closed_loop()
-                self._snapshot("psd_final")
-                self._rampdown(self.c.rampdown_s, self._drive_psd)
-                completed = True
-                self.state = State.DONE
-            except OperatorStop as exc:
-                reason = str(exc)
-                self._snapshot("psd_final")
-                self._rampdown(self.c.rampdown_s, self._drive_psd)
-                self.state = State.ABORTED
-            except AbortError as exc:
-                reason = f"ABORT: {exc}"
-                self._snapshot("psd_final")
-                self._rampdown(self.s.abort_rampdown_s, self._drive_psd)
-                self.state = State.ABORTED
-        except DaqFault as exc:
-            reason = f"DAQ fault: {exc}" if reason == "completed" else \
-                f"{reason}; DAQ fault during ramp-down: {exc}"
-            completed = False
-            self.state = State.ABORTED
-        except AbortError as exc:   # raised again during ramp-down
-            reason = f"{reason}; {exc} during ramp-down"
-            completed = False
-            self.state = State.ABORTED
-        finally:
-            self.backend.stop()
-        return self._result(completed, self.state, reason)
-
-    def _result(self, completed: bool, state: State, reason: str) -> RunResult:
-        ev = self.last_eval
-        return RunResult(completed=completed, state=state, reason=reason,
-                         run_time_s=self.run_time_s,
-                         ref_rms_g=ev.ref_rms_g if ev else None,
-                         meas_rms_g=ev.meas_rms_g if ev else None,
-                         rms_err_db=ev.rms_err_db if ev else None,
-                         log_dir=str(self.logger.dir) if self.logger else None)

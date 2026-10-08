@@ -1,0 +1,19 @@
+# Stepped sine at three base levels: every level runs the whole frequency list. Each step
+# settles (at least settle_s, until the amplitude is within alarm_db), then dwells for dwell_s;
+# steps.csv gets one row per step (measured amplitude, drive, H magnitude and phase).
+type = "stepped_sine"
+name = "Stepped sine 50-500 Hz, 3 levels"
+f_start_hz = 50.0              # or an explicit list: frequencies_hz = [80.0, 120.0, 160.0]
+f_end_hz = 500.0
+points_per_octave = 6
+direction = "up"               # or "down"
+levels_db = [-12.0, -6.0, 0.0] # relative to the breakpoints (here 0.125, 0.25, 0.5 g)
+settle_s = 2.0                 # minimum time at a new frequency before the dwell
+max_settle_s = 30.0            # abort if the amplitude is not reached within this time
+dwell_s = 3.0                  # measurement time per step
+
+breakpoints = [{ f_hz = 50.0, accel_g = 0.5 }]
+
+[tolerance]
+alarm_db = 1.0
+abort_db = 3.0

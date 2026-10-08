@@ -39,6 +39,14 @@ max_frames_per_level = 200     # abort if a level cannot be reached within this 
 rampdown_s = 0.5
 snapshot_interval_s = 5.0      # PSD snapshot logging interval
 
+[sine]                         # sine sweep / stepped sine profiles
+correction_gain = 0.15         # fraction of the amplitude error (dB) corrected per half-frame;
+                               # > 0.25 overshoots (loop delay of about 4 half-frames)
+max_step_db = 1.0              # max drive correction per half-frame
+max_correction_db = 20.0       # max accumulated correction relative to the pretest FRF
+ramp_s = 2.0                   # ramp from control.start_level_db at the start and after a ring-down
+settled_blocks = 3             # stepped sine: half-frames within alarm_db before the dwell starts
+
 [safety]
 max_clip_fraction = 0.005      # abort if more than this fraction of a block is clipped
 payload_kg = 0.02              # accelerometer + fixture + specimen mass on the armature

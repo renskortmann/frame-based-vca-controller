@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from .config import ShakerConfig, Settings
-from .profile import G, Profile
+from .profile import G, Profile, SineProfile
 
 
 class AbortError(RuntimeError):
@@ -37,9 +39,11 @@ class PreflightReport:
         return "\n".join(lines)
 
 
-def preflight(profile: Profile, shaker: ShakerConfig, settings: Settings,
+def preflight(profile: Profile | SineProfile, shaker: ShakerConfig, settings: Settings,
               level_db: float = 0.0) -> PreflightReport:
     """Check a profile at ``level_db`` against the shaker and settings limits before any output."""
+    if isinstance(profile, SineProfile):
+        return preflight_sine(profile, shaker, settings, level_db)
     k = 10 ** (level_db / 20)                 # amplitude factor
     sigma = settings.safety.displacement_sigma
     fs = settings.fs_control_hz
@@ -70,6 +74,45 @@ def preflight(profile: Profile, shaker: ShakerConfig, settings: Settings,
     sensor = settings.sensor
     if sensor.type == "displacement":
         checks += (check("profile f_hi <= sensor f_max", profile.f_hi, sensor.f_max_hz, "Hz"),)
+    return PreflightReport(checks)
+
+
+def preflight_sine(profile: SineProfile, shaker: ShakerConfig, settings: Settings,
+                   level_db: float = 0.0) -> PreflightReport:
+    """Sine profile at its highest level (``levels_db``) plus ``level_db``: peak values over the
+    test band against the shaker's sine ratings."""
+    k = 10 ** ((level_db + profile.max_level_db) / 20)
+    fs = settings.fs_control_hz
+    df = fs / settings.control.frame_size
+    if profile.kind == "stepped_sine":
+        f = np.array(profile.frequencies_hz)
+    else:
+        f = np.geomspace(profile.f_lo, profile.f_hi, 2000)
+    a_pk = float(np.max(profile.accel_pk_g(f))) * k
+    v_pk = float(np.max(profile.velocity_pk_m_s(f))) * k
+    d_pp = float(np.max(profile.displacement_pp_mm(f))) * k
+    force = (shaker.moving_mass_kg + settings.safety.payload_kg) * a_pk * G
+
+    def check(name, value, limit, unit, ok=None):
+        return Check(name, value, limit, unit, value <= limit if ok is None else ok)
+
+    checks = (
+        check("payload <= static max", settings.safety.payload_kg,
+              shaker.payload_static_max_kg, "kg"),
+        check("accel peak", a_pk, shaker.accel_sine_peak_g, "g"),
+        check("force peak (m_total*a)", force, shaker.force_sine_peak_n, "N"),
+        check("velocity peak", v_pk, shaker.velocity_peak_m_s, "m/s"),
+        check("displacement p-p", d_pp, shaker.displacement_pp_mm, "mm"),
+        check("profile f_lo >= shaker f_min", profile.f_lo, shaker.f_min_hz, "Hz",
+              profile.f_lo >= shaker.f_min_hz),
+        check("profile f_hi <= shaker f_max", profile.f_hi, shaker.f_max_hz, "Hz",
+              profile.f_hi <= shaker.f_max_hz),
+        check("profile f_hi <= 0.6 * fs/2", profile.f_hi, 0.3 * fs, "Hz"),
+        check("profile f_lo >= 2 lines", profile.f_lo, 2 * df, "Hz", profile.f_lo >= 2 * df),
+    )
+    if settings.sensor.type == "displacement":
+        checks += (check("profile f_hi <= sensor f_max", profile.f_hi,
+                         settings.sensor.f_max_hz, "Hz"),)
     return PreflightReport(checks)
 
 
@@ -107,6 +150,11 @@ class RuntimeMonitor:
         if response_rms_g > self.shaker.accel_random_rms_g:
             raise AbortError(f"response {response_rms_g:.2f} g rms exceeds shaker limit "
                              f"{self.shaker.accel_random_rms_g:g} g rms")
+
+    def check_response_peak(self, response_pk_g: float) -> None:
+        if response_pk_g > self.shaker.accel_sine_peak_g:
+            raise AbortError(f"response {response_pk_g:.2f} g peak exceeds shaker limit "
+                             f"{self.shaker.accel_sine_peak_g:g} g peak")
 
     def check_open_loop(self, response_rms_g: float, reference_rms_g: float) -> None:
         """Detect loss of the feedback signal (sensor or amplifier disconnected)."""

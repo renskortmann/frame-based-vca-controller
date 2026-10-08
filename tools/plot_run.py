@@ -1,5 +1,8 @@
 """Plot a vcactl run directory: PSD vs. tolerance bands, FRF and status history.
 
+Sine runs: amplitude versus frequency (sweep: per half-frame; stepped: per step and level),
+pretest FRF, and the amplitude error over time.
+
 usage: python tools/plot_run.py runs/<run-dir> [--snapshot psd_final] [--save out.png]
 """
 
@@ -14,6 +17,39 @@ import numpy as np
 def load_csv(path: Path) -> dict:
     data = np.genfromtxt(path, delimiter=",", names=True)
     return {name: data[name] for name in data.dtype.names}
+
+
+def plot_sine(run_dir: Path, status_path: Path, ax_amp, ax_frf, ax_stat) -> None:
+    with open(status_path) as fh:
+        rows = [r for r in csv.DictReader(fh) if r["meas_pk_g"]]
+    steps_path = run_dir / "steps.csv"
+    if steps_path.exists():
+        with open(steps_path) as fh:
+            steps = list(csv.DictReader(fh))
+        for level in sorted({float(r["level_db"]) for r in steps}):
+            sel = [r for r in steps if float(r["level_db"]) == level]
+            f = [float(r["f_hz"]) for r in sel]
+            ax_amp.loglog(f, [float(r["meas_pk_g"]) for r in sel], "o-", label=f"{level:+g} dB")
+            ax_frf.loglog(f, [float(r["h_mag_g_per_v"]) for r in sel], "o", ms=4,
+                          label=f"|H| at {level:+g} dB")
+        ax_amp.set(title=f"{run_dir.name}: stepped sine (dwell mean)")
+    else:
+        sweep = [r for r in rows if r["state"].startswith("sweep")]
+        f = [float(r["f_hz"]) for r in sweep]
+        ax_amp.loglog(f, [float(r["ref_pk_g"]) for r in sweep], "k", label="reference")
+        ax_amp.loglog(f, [float(r["meas_pk_g"]) for r in sweep], "C0", lw=0.8, label="control")
+        ax_amp.set(title=f"{run_dir.name}: sine sweep")
+    ax_amp.set(xlabel="frequency (Hz)", ylabel="amplitude (g peak)")
+    ax_amp.legend()
+    ax_amp.grid(True, which="both", alpha=0.3)
+    ax_frf.legend()
+    if rows:
+        t = [float(r["t_s"]) for r in rows]
+        ax_stat.plot(t, [float(r["err_db"]) for r in rows], "C0", lw=0.8, label="amplitude error (dB)")
+        ax_stat.plot(t, [float(r["drive_pk_v"]) for r in rows], "C1", lw=0.8, label="drive (V peak)")
+        ax_stat.set(xlabel="time (s)")
+        ax_stat.legend()
+        ax_stat.grid(True, alpha=0.3)
 
 
 def main() -> None:
@@ -54,7 +90,11 @@ def main() -> None:
         ax_frf.grid(True, which="both", alpha=0.3)
 
     status_path = args.run_dir / "status.csv"
-    if status_path.exists():
+    with open(status_path) as fh:
+        sine = "meas_pk_g" in (csv.DictReader(fh).fieldnames or [])
+    if sine:
+        plot_sine(args.run_dir, status_path, ax_psd, ax_frf, ax_stat)
+    elif status_path.exists():
         with open(status_path) as fh:
             rows = [r for r in csv.DictReader(fh) if r["meas_rms_g"]]
         if rows:

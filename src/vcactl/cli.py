@@ -8,19 +8,23 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
+
 from . import __version__
 from .config import (DEFAULT_CONFIG_DIR, ConfigError, load_shaker, load_settings,
                      validate_setup)
 from .controller import Controller, State
-from .logger import RunLogger
-from .profile import load_profile
+from .logger import STATUS_FIELDS, RunLogger
+from .profile import SineProfile, load_profile
 from .safety import preflight
+from .sine import SINE_STATUS_FIELDS, SineController
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--shaker", required=True,
                    help="shaker key (tv51110, tv52110, bk4809, bk4801_4812) or path to a shaker TOML file")
-    p.add_argument("--profile", required=True, help="path to a test profile TOML file")
+    p.add_argument("--profile", required=True,
+                   help="path to a test profile TOML file (random, sine_sweep or stepped_sine)")
     p.add_argument("--daq", default="usb6211",
                    help="DAQ device key (usb6211, usb4431, pxie4468) or path to a DAQ TOML file "
                         "(default usb6211)")
@@ -54,11 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p)
     _add_run_opts(p)
 
-    p = sub.add_parser("run", help="run a closed-loop random test")
+    p = sub.add_parser("run", help="run a closed-loop random or sine test")
     _add_common(p)
     _add_run_opts(p)
     p.add_argument("--duration", type=float, default=None,
-                   help="test duration at full level in s (default: from profile)")
+                   help="random: test duration at full level in s (default: from profile); "
+                        "ignored for sine profiles")
     return ap
 
 
@@ -67,7 +72,12 @@ def _print_status(row: dict, last: list) -> None:
     if now - last[0] < 0.25:
         return
     last[0] = now
-    if "meas_rms_g" in row:
+    if row.get("f_hz") is not None and "meas_pk_g" in row:
+        text = (f"{row['state']:<11} {row['step']:<7} {row['f_hz']:8.2f} Hz  "
+                f"ref {row['ref_pk_g']:7.3f} g  meas {row['meas_pk_g']:7.3f} g  "
+                f"err {row['err_db']:+5.2f} dB  drive {row['drive_pk_v']:5.3f} Vpk  "
+                f"phase {row['phase_deg']:+6.1f} deg")
+    elif "meas_rms_g" in row:
         text = (f"{row['state']:<8} {row['level_db']:+6.1f} dB  "
                 f"ref {row['ref_rms_g']:6.3f} g  meas {row['meas_rms_g']:6.3f} g  "
                 f"err {row['rms_err_db']:+5.2f} dB  drive {row['drive_rms_v']:5.3f} Vrms  "
@@ -109,11 +119,36 @@ def _sensor_text(sensor) -> str:
     return f"accelerometer ({sensor.sensitivity_mv_per_g:g} mV/g)"
 
 
+def _profile_text(profile, level_db: float) -> str:
+    if not isinstance(profile, SineProfile):
+        return (f"{profile.name} at {level_db:+.1f} dB ({profile.f_lo:g}-{profile.f_hi:g} Hz, "
+                f"{profile.accel_rms_g() * 10 ** (level_db / 20):.3f} g rms)")
+    k = 10 ** ((level_db + profile.max_level_db) / 20)
+    if profile.kind == "sine_sweep":
+        f = np.geomspace(profile.f_lo, profile.f_hi, 500)
+        what = (f"sweep {profile.f_start_hz:g} -> {profile.f_end_hz:g} Hz, "
+                f"{profile.rate_oct_min:g} oct/min, {profile.sweeps} sweep(s)")
+    else:
+        f = np.array(profile.frequencies_hz)
+        what = (f"stepped sine, {len(f)} frequencies {profile.f_lo:g}-{profile.f_hi:g} Hz x "
+                f"{len(profile.levels_db)} level(s)"
+                + (f", ring-down {profile.ringdown_s:g} s" if profile.ringdown_s else ""))
+    return (f"{profile.name} at {level_db:+.1f} dB\n         {what}\n"
+            f"         max {np.max(profile.accel_pk_g(f)) * k:.3f} g peak, "
+            f"{np.max(profile.displacement_pp_mm(f)) * k:.3f} mm p-p, "
+            f"about {profile.duration_estimate_s() / 60:.1f} min")
+
+
+def make_controller(settings, shaker, profile, backend, **kwargs):
+    cls = SineController if isinstance(profile, SineProfile) else Controller
+    return cls(settings, shaker, profile, backend, **kwargs)
+
+
 def cmd_check(args, settings, shaker, profile) -> int:
     report = preflight(profile, shaker, settings, args.level)
     print(f"shaker : {shaker.name}\ndaq    : {settings.daq.model}\n"
-          f"sensor : {_sensor_text(settings.sensor)}\nprofile: {profile.name} at {args.level:+.1f} dB "
-          f"({profile.f_lo:g}-{profile.f_hi:g} Hz, {profile.accel_rms_g() * 10 ** (args.level / 20):.3f} g rms)\n")
+          f"sensor : {_sensor_text(settings.sensor)}\n"
+          f"profile: {_profile_text(profile, args.level)}\n")
     print(report.format())
     print("\nPASS" if report.ok else "\nFAIL")
     return 0 if report.ok else 2
@@ -139,13 +174,18 @@ def cmd_run(args, settings, shaker, profile, pretest_only: bool) -> int:
             return 1
 
     tag = f"{'pretest' if pretest_only else 'run'}_{Path(args.shaker).stem}_{Path(args.profile).stem}"
-    logger = RunLogger(args.log_dir, tag + ("_sim" if args.sim else ""))
+    sine = isinstance(profile, SineProfile)
+    if sine and getattr(args, "duration", None) is not None:
+        print("note: --duration is ignored for sine profiles")
+    logger = RunLogger(args.log_dir, tag + ("_sim" if args.sim else ""),
+                       SINE_STATUS_FIELDS if sine else STATUS_FIELDS)
     block_io = settings.control.frame_size // 2 * settings.daq.decimation
     backend = _make_backend(args, settings, shaker, block_io)
     last = [0.0]
-    ctl = Controller(settings, shaker, profile, backend, target_level_db=args.level,
-                     duration_s=getattr(args, "duration", None), logger=logger, seed=args.seed,
-                     on_status=lambda row: _print_status(row, last))
+    ctl = make_controller(settings, shaker, profile, backend, target_level_db=args.level,
+                          duration_s=None if sine else getattr(args, "duration", None),
+                          logger=logger, seed=args.seed,
+                          on_status=lambda row: _print_status(row, last))
     logger.meta({"version": __version__, "shaker": shaker, "settings": settings,
                  "profile": profile, "level_db": args.level, "sim": args.sim,
                  "pretest_only": pretest_only, "started": time.strftime("%Y-%m-%dT%H:%M:%S")})
@@ -174,11 +214,16 @@ def cmd_run(args, settings, shaker, profile, pretest_only: bool) -> int:
         print("pretest: response {response_rms_g:.3g} g rms, noise {noise_rms_g:.3g} g rms, "
               "SNR {snr_db:.1f} dB, mean coherence {coherence_mean:.3f}".format(**info)
               + (f", predicted drive {info['predicted_drive_rms_v']:.3f} V rms"
-                 if "predicted_drive_rms_v" in info else ""))
+                 if "predicted_drive_rms_v" in info else "")
+              + (f", predicted drive {info['predicted_drive_pk_v']:.3f} V peak"
+                 if "predicted_drive_pk_v" in info else ""))
     print(f"result : {result.reason}")
     if result.meas_rms_g is not None:
         print(f"final  : ref {result.ref_rms_g:.3f} g rms, meas {result.meas_rms_g:.3f} g rms "
               f"({result.rms_err_db:+.2f} dB), {result.run_time_s:.1f} s at full level")
+    if sine and ctl.steps:
+        print(f"steps  : {len(ctl.steps)} written to steps.csv"
+              + (f", {len(ctl.events)} ring-down(s)" if ctl.events else ""))
     print(f"logs   : {logger.dir}")
     return 0 if result.completed else (1 if result.state == State.ABORTED else 3)
 

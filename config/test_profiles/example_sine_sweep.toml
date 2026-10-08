@@ -1,0 +1,24 @@
+# Logarithmic sine sweep at constant acceleration, controlled on the control sensor.
+# The reference is a breakpoint table: each breakpoint gives one of accel_g (peak),
+# velocity_m_s (peak) or displacement_mm_pp (peak-peak); the acceleration is interpolated
+# log-log between breakpoints and held constant beyond them. For constant displacement below
+# a crossover, add a displacement breakpoint and put the next breakpoint at the crossover,
+# e.g. 4 mm p-p and 0.5 g cross at 7.9 Hz:
+#   { f_hz = 5.0, displacement_mm_pp = 4.0 }, { f_hz = 7.88, accel_g = 0.5 },
+# The lowest frequency must be at least 2 lines (12.2 Hz with the default settings; raise
+# daq.decimation in the settings for lower frequencies).
+type = "sine_sweep"
+name = "Sine sweep 20-2000 Hz, 0.5 g"
+f_start_hz = 20.0              # default: first breakpoint; f_start > f_end sweeps down
+f_end_hz = 2000.0              # default: last breakpoint
+rate_oct_min = 1.0             # logarithmic sweep rate (octaves per minute)
+sweeps = 1                     # single sweeps; the direction alternates (2 = up and down)
+
+breakpoints = [
+    { f_hz = 20.0, accel_g = 0.5 },
+    { f_hz = 2000.0, accel_g = 0.5 },
+]
+
+[tolerance]                    # amplitude error (dB) for sine profiles
+alarm_db = 1.0
+abort_db = 3.0

@@ -1,0 +1,16 @@
+# Stepped sine 20-200 Hz for the laser displacement sensor (config/settings_laser.toml).
+# 0.2 g peak is 0.25 mm p-p at 20 Hz.
+type = "stepped_sine"
+name = "Stepped sine 20-200 Hz, 0.2 g"
+f_start_hz = 20.0
+f_end_hz = 200.0
+points_per_octave = 3
+levels_db = [-6.0, 0.0]
+settle_s = 3.0
+dwell_s = 4.0
+
+breakpoints = [{ f_hz = 20.0, accel_g = 0.2 }]
+
+[tolerance]
+alarm_db = 1.0
+abort_db = 3.0

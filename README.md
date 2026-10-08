@@ -1,6 +1,7 @@
-# vcactl — frame-based closed-loop random vibration controller
+# vcactl — frame-based closed-loop vibration controller
 
-`vcactl` runs closed-loop **random vibration** tests on a TIRA **TV 51110** or **TV 52110**
+`vcactl` runs closed-loop **random vibration**, **sine sweep** and **stepped sine** (with
+optional **ring-down**) tests on a TIRA **TV 51110** or **TV 52110**
 (each with a BDA 120 power amplifier), a **BK 4809** with a BK 2718 amplifier, or a **BK 4801**
 body with **4812** general purpose head and a BK 2707 amplifier. The drive goes out through an
 **NI USB-4431**, **NI PXIe-4468** or **NI USB-6211**, and the loop is closed with an
@@ -134,6 +135,13 @@ Each run directory contains:
 - `psd_<t>s.csv` snapshots and `psd_final.csv`: reference, control PSD, tolerance bands,
   drive PSD, FRF and correction.
 
+Sine runs have their own `status.csv` columns (frequency, reference/measured peak amplitude,
+error, drive amplitude, phase) and, for stepped sine:
+
+- `steps.csv`: one row per step with the dwell mean of the measured amplitude, drive, H
+  magnitude and phase, displacement and the (approximate) wall-clock start time.
+- `events.csv` and `ringdown_<step>.csv`: drive cuts and the recorded decays (below).
+
 ## Test profiles (`config/test_profiles/*.toml`)
 
 ```toml
@@ -155,6 +163,43 @@ max_abort_lines_pct = 5.0
 
 The PSD is interpolated log-log between breakpoints and is zero outside the first and last
 breakpoint.
+
+### Sine profiles
+
+`type = "sine_sweep"` or `type = "stepped_sine"` (random is the default). The reference
+amplitude is a breakpoint table; each breakpoint gives one of `accel_g` (peak),
+`velocity_m_s` (peak) or `displacement_mm_pp` (peak-peak). Acceleration is interpolated log-log
+between breakpoints and held constant beyond them, so two displacement breakpoints give
+exactly constant displacement. For "constant displacement, then constant acceleration", put a
+breakpoint at the crossover frequency.
+
+```toml
+type = "sine_sweep"
+f_start_hz = 20.0          # default: first breakpoint; f_start > f_end sweeps down
+f_end_hz = 2000.0
+rate_oct_min = 1.0         # logarithmic sweep
+sweeps = 1                 # single sweeps, alternating direction
+breakpoints = [{ f_hz = 20.0, accel_g = 0.5 }, { f_hz = 2000.0, accel_g = 0.5 }]
+[tolerance]                # amplitude error; defaults for sine: 1 / 3 dB
+alarm_db = 1.0
+abort_db = 3.0
+```
+
+```toml
+type = "stepped_sine"
+frequencies_hz = [120.0]   # or f_start_hz / f_end_hz / points_per_octave
+direction = "up"
+levels_db = [-12.0, -6.0, 0.0]   # every level runs all frequencies
+settle_s = 2.0             # minimum time before the dwell (and until within alarm_db)
+max_settle_s = 30.0
+dwell_s = 3.0
+ringdown_s = 2.0           # 0 = off
+breakpoints = [{ f_hz = 120.0, accel_g = 0.5 }]
+```
+
+Examples: `example_sine_sweep.toml`, `example_stepped_sine.toml`, `example_ringdown.toml`
+and `example_stepped_sine_low_freq.toml` (for the laser sensor settings). `--level` shifts
+every level; `--duration` is ignored for sine profiles.
 
 ## How it works
 
@@ -196,6 +241,33 @@ breakpoint.
   (`ao_queue_blocks` + 1 half-frames, about 250 ms) still plays out before the ramp-down.
   A DAQ fault stops immediately and writes 0 V.
 
+### Sine control
+
+- The same noise-floor and flat random pretest run first, over the test band widened by
+  1/3 octave. The pretest H1 gives the feed-forward drive amplitude
+  D = c · A_ref(f) · L / |H(f)|, which also checks before any sine output that the drive
+  stays within `max_drive_v` and √2 · `max_drive_rms_v`.
+- The amplitude is measured every half-frame with a tracking filter: the last frame of the
+  control signal is demodulated with the drive phase (delayed by the same I/O delay as the
+  FRF) and Hann-weighted. The scalar correction c (dB) is updated from the error with
+  `sine.correction_gain`. The loop delay is about four half-frames, so gains above about 0.25
+  overshoot.
+- Frequency and amplitude change smoothly within each half-frame (log frequency, continuous
+  phase); a level starts with a ramp of `sine.ramp_s` from `control.start_level_db` below it.
+- **Aborts:** response peak over the shaker's sine rating, open loop, amplitude error beyond
+  `abort_db` for 3 half-frames (sweep and dwell), a step that does not settle within
+  `max_settle_s`, a drive amplitude over `max_drive_v`, plus the random I/O aborts.
+- **Ring-down:** after the dwell the sine is cut at a zero crossing and the drive stays at
+  0 V for `ringdown_s`. The control signal (g, or mm with the laser sensor) is written from
+  0.1 s before the cut, with t = 0 at the cut. `events.csv` records the cut as stream time
+  (sample-exact) and wall-clock time (stream start + stream time, accurate to about the USB
+  latency, tens of ms). Use it to find the decay in an external recording (Q2); precise
+  alignment needs a trigger output (not implemented). With the amplifier in voltage mode
+  (BDA 120) the amplifier damps the armature at 0 V. In current mode (BK 2707 "High") the
+  table keeps moving with the specimen, so measure the specimen's motion relative to the table.
+- Response-controlled and phase-resonant sine need the response of the specimen in `vcactl`,
+  that is a second AI channel; they are not implemented.
+
 ## DAQ profiles (`config/daq/*.toml`)
 
 A DAQ profile holds the device settings (device name, channels, ranges, coupling, IEPE, rates)
@@ -218,6 +290,8 @@ The shaker's `max_drive_v` must not exceed `daq.ao_range_v`. IEPE excitation req
 - `daq.fs_io_hz` must be a rate the device supports (see the DAQ profiles above). The control
   band is limited to 0.6 × control Nyquist (7.5 kHz with the USB-6211 defaults, 7.68 kHz with
   the USB-4431/PXIe-4468 defaults).
+- `sine.correction_gain` (default 0.15) above about 0.25 overshoots after a sudden change of
+  the specimen; lower it for slower, smoother sine control.
 - `control.correction_gain` above about 0.2 can overshoot. Raise `control.control_dof` for
   smoother but slower equalization.
 - The drive limits `max_drive_v` (peak clip) and `max_drive_rms_v` are in the shaker file,
@@ -234,9 +308,10 @@ vcactl run --sim --shaker tv52110 --profile config/test_profiles/example_wideban
 
 Layout:
 
-- `src/vcactl/controller.py`: control loop and state machine.
+- `src/vcactl/controller.py`: I/O loop, pretest and the random control loop.
+- `sine.py`: sine sweep, stepped sine and ring-down.
 - `drive.py`: drive synthesis.
 - `dsp/`: resampling and spectra.
-- `safety.py`: pre-flight and runtime monitors.
+- `safety.py`: pre-flight (random and sine) and runtime monitors.
 - `daq/nidaq.py`, `daq/sim.py`: backends.
 - `profile.py`, `config.py`, `logger.py`, `cli.py`.

@@ -6,7 +6,8 @@ from conftest import PROFILES
 
 
 def test_bundled_profiles_pass(settings, shaker):
-    for name in ("example_flat", "example_sloped", "example_wideband"):
+    for name in ("example_flat", "example_sloped", "example_wideband", "example_sine_sweep",
+                 "example_stepped_sine", "example_ringdown"):
         assert preflight(load_profile(PROFILES / f"{name}.toml"), shaker, settings).ok
 
 
@@ -77,3 +78,26 @@ def test_sensor_range_monitor(laser_settings, settings, tv51110):
     with pytest.raises(AbortError, match="sensor range"):
         m.check_sensor_range(1.0, 10.5)
     RuntimeMonitor(settings, tv51110).check_sensor_range(float("nan"), float("nan"))
+
+
+@pytest.mark.parametrize("amp,failed", [
+    ("accel_g = 46.0", "accel peak"),                     # TV 51110: 45 g peak
+    ("accel_g = 40.0", "force peak (m_total*a)"),         # (0.23 + 0.1) kg * 40 g = 129 N > 100 N
+    ("displacement_mm_pp = 14.0", "displacement p-p"),    # 13 mm p-p stroke
+])
+def test_sine_preflight_limits(settings, tv51110, tmp_path, amp, failed):
+    import dataclasses
+    heavy = dataclasses.replace(settings, safety=dataclasses.replace(settings.safety, payload_kg=0.1))
+    p = tmp_path / "s.toml"
+    p.write_text(f'type = "sine_sweep"\nbreakpoints = [{{ f_hz = 20.0, {amp} }}]\n'
+                 'f_end_hz = 100.0\n')
+    report = preflight(load_profile(p), tv51110, heavy)
+    assert failed in {c.name for c in report.checks if not c.ok}
+
+
+def test_stepped_sine_preflight_uses_highest_level(settings, tv51110, tmp_path):
+    p = tmp_path / "s.toml"
+    p.write_text('type = "stepped_sine"\nbreakpoints = [{ f_hz = 100.0, accel_g = 30.0 }]\n'
+                 'frequencies_hz = [100.0]\nlevels_db = [-6.0, 4.0]\n')
+    report = preflight(load_profile(p), tv51110, settings)
+    assert "accel peak" in {c.name for c in report.checks if not c.ok}     # 30 g + 4 dB = 47.5 g
