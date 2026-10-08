@@ -56,3 +56,24 @@ def test_static_payload_limit(settings, flat_profile):
     report = preflight(flat_profile, shaker, heavy, level_db=-20)
     failed = {c.name for c in report.checks if not c.ok}
     assert "payload <= static max" in failed
+
+
+def test_sensor_bandwidth_limit(laser_settings, tv51110, tmp_path):
+    p = tmp_path / "to800.toml"      # beyond the laser settings' f_max_hz = 500
+    p.write_text("breakpoints = [{ f_hz = 20.0, psd_g2_hz = 0.001 }, { f_hz = 800.0, psd_g2_hz = 0.001 }]\n")
+    report = preflight(load_profile(p), tv51110, laser_settings)
+    failed = {c.name for c in report.checks if not c.ok}
+    assert failed == {"profile f_hi <= sensor f_max"}
+
+
+def test_sensor_range_monitor(laser_settings, settings, tv51110):
+    import dataclasses
+    win = dataclasses.replace(laser_settings, sensor=dataclasses.replace(
+        laser_settings.sensor, range_min_mm=0.0, range_max_mm=10.0))
+    m = RuntimeMonitor(win, tv51110)
+    m.check_sensor_range(1.0, 9.0)
+    with pytest.raises(AbortError, match="sensor range"):
+        m.check_sensor_range(-0.1, 9.0)
+    with pytest.raises(AbortError, match="sensor range"):
+        m.check_sensor_range(1.0, 10.5)
+    RuntimeMonitor(settings, tv51110).check_sensor_range(float("nan"), float("nan"))

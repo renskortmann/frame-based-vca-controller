@@ -154,3 +154,35 @@ def test_converges_on_dsa_devices(daq, tv51110, wideband_profile):
     assert abs(res.rms_err_db) < 0.5
     assert ctl.pretest_info["coherence_mean"] > 0.95
     assert_safe_stop(tv51110, backend)
+
+
+def test_displacement_sensor_converges(laser_settings, tv51110, low_freq_profile):
+    rows = []
+    ctl, backend, res = run(laser_settings, tv51110, low_freq_profile, rows=rows)
+    assert res.completed and res.state == State.DONE, res.reason
+    assert abs(res.rms_err_db) < 0.5
+    assert ctl.pretest_info["coherence_mean"] > 0.95
+    assert ctl.last_eval.lines_alarm <= 0.05 * ctl.last_eval.n_lines
+    # block rms is reported in g (in band), not in mm
+    run_rows = [r for r in rows if r["state"] == "run"]
+    assert run_rows[-1]["block_rms_g"] == pytest.approx(res.ref_rms_g, rel=0.3)
+    assert_safe_stop(tv51110, backend)
+
+
+def test_displacement_sensor_range_aborts(laser_settings, tv51110, low_freq_profile):
+    s = dataclasses.replace(laser_settings, sensor=dataclasses.replace(
+        laser_settings.sensor, range_min_mm=4.99, range_max_mm=5.01))
+    _, backend, res = run(s, tv51110, low_freq_profile)
+    assert not res.completed and "sensor range" in res.reason
+    assert_safe_stop(tv51110, backend)
+
+
+def test_displacement_sensor_disconnect_aborts(laser_settings, tv51110, low_freq_profile):
+    # 5 kHz control rate: noise + pretest take about 20 s, so disconnect during the run
+    _, backend, res = run(laser_settings, tv51110, low_freq_profile, duration=60.0,
+                          sim_kwargs={"disconnect_after_s": 40.0})
+    # the signal drops to 0 V: a step of offset_mm in displacement, which either collapses the
+    # coherence or leaves no in-band response; both must abort
+    assert not res.completed and res.state == State.ABORTED
+    assert "open loop" in res.reason or "coherence" in res.reason, res.reason
+    assert_safe_stop(tv51110, backend)

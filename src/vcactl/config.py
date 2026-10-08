@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import sys
 import typing
 from dataclasses import dataclass, field
@@ -92,9 +93,22 @@ class DaqConfig:
     ao_queue_blocks: int = 2
 
 
+SENSOR_TYPES = ("accelerometer", "displacement")
+
+
 @dataclass(frozen=True)
 class SensorConfig:
-    sensitivity_mv_per_g: float = 10.0
+    """Control sensor: an accelerometer (mV/g) or a displacement sensor (mm/V).
+
+    A displacement signal is converted to acceleration per spectral line by the controller.
+    """
+    type: str = "accelerometer"           # "accelerometer" or "displacement"
+    sensitivity_mv_per_g: float = 10.0    # accelerometer chain sensitivity at the DAQ input
+    mm_per_v: float = 0.0                 # displacement: mm = mm_per_v * V + offset_mm
+    offset_mm: float = 0.0
+    range_min_mm: float = -math.inf       # displacement: abort outside this window
+    range_max_mm: float = math.inf
+    f_max_hz: float = math.inf            # displacement: usable sensor bandwidth (pre-flight)
 
 
 @dataclass(frozen=True)
@@ -324,8 +338,18 @@ def validate_settings(cfg: Settings, where: str = "settings") -> None:
         raise ConfigError(f"{where}: control.dof/control_dof must be >= 2, frf_averages >= 1")
     if c.start_level_db > 0 or c.level_step_db <= 0:
         raise ConfigError(f"{where}: control.start_level_db must be <= 0 and level_step_db > 0")
-    if cfg.sensor.sensitivity_mv_per_g <= 0:
+    sn = cfg.sensor
+    if sn.type not in SENSOR_TYPES:
+        raise ConfigError(f"{where}: sensor.type must be one of {_fmt(SENSOR_TYPES)}")
+    if sn.type == "accelerometer" and sn.sensitivity_mv_per_g <= 0:
         raise ConfigError(f"{where}: sensor.sensitivity_mv_per_g must be > 0")
+    if sn.type == "displacement":
+        if sn.mm_per_v == 0 or not math.isfinite(sn.mm_per_v):
+            raise ConfigError(f"{where}: sensor.mm_per_v must be a non-zero number")
+        if not sn.range_min_mm < sn.range_max_mm:
+            raise ConfigError(f"{where}: sensor.range_min_mm must be < range_max_mm")
+        if sn.f_max_hz <= 0:
+            raise ConfigError(f"{where}: sensor.f_max_hz must be > 0")
     if cfg.pretest.drive_rms_v <= 0:
         raise ConfigError(f"{where}: pretest.drive_rms_v must be > 0")
 

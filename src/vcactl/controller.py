@@ -4,7 +4,8 @@ Each loop iteration (one half-frame of N/2 control-rate samples):
 
 1. synthesize the next drive half-frame from the current drive PSD (random phase, overlap-add),
 2. interpolate to the I/O rate, clip, and queue it on AO,
-3. read the matching amount of AI, decimate, and scale to g,
+3. read the matching amount of AI, decimate, and scale to g (accelerometer) or mm
+   (displacement sensor; converted to g per spectral line in step 4),
 4. pair the latest N response samples with the drive samples that caused them and update the
    averaged spectra (H1 FRF, coherence, response PSD),
 5. correct the drive PSD per line, run the safety checks and advance the level schedule.
@@ -31,7 +32,7 @@ from .drive import RandomDriveGenerator, flat_psd
 from .dsp.resample import Decimator, Interpolator, design_lowpass, total_delay_control_samples
 from .dsp.spectral import AutoSpectrumAverager, CrossSpectrumAverager, Spectrum
 from .logger import RunLogger
-from .profile import Profile
+from .profile import G, Profile
 from .safety import AbortError, RuntimeMonitor, preflight
 
 
@@ -78,6 +79,8 @@ class StepResult:
     clip_fraction: float
     ai_peak_v: float
     block_rms_g: float
+    disp_min_mm: float = math.nan
+    disp_max_mm: float = math.nan
 
 
 @dataclass
@@ -127,7 +130,12 @@ class Controller:
         self.freqs, self.df = self.spec.freqs, self.spec.df
         self.band = (self.freqs >= profile.f_lo) & (self.freqs <= profile.f_hi)
         self.s_ref = profile.psd(self.freqs)          # at 0 dB
-        self.v_per_g = settings.sensor.sensitivity_mv_per_g / 1000
+        self.sensor = settings.sensor
+        self.displacement = self.sensor.type == "displacement"
+        self.v_per_g = self.sensor.sensitivity_mv_per_g / 1000
+        # displacement sensor: |A| = (2 pi f)^2 |X|, X in mm -> A in g (the sign is irrelevant)
+        self.y_weight = (2 * np.pi * self.freqs) ** 2 * 1e-3 / G if self.displacement else None
+        self._frame_rms_g = 0.0
 
         taps = design_lowpass(d.fs_io_hz, self.R)
         self.interp = Interpolator(taps, self.R)
@@ -193,25 +201,39 @@ class Controller:
         self.backend.write(y)
 
         ai = self.backend.read(self.block_io)
-        r = self.decim.process(ai) / self.v_per_g
+        if self.displacement:
+            r = self.decim.process(ai) * self.sensor.mm_per_v
+        else:
+            r = self.decim.process(ai) / self.v_per_g
         self.resp_hist.append(r)
         self.samples += self.half
         self._update_spectra()
-        return StepResult(drive_rms_v=float(np.sqrt(np.mean(y**2))),
-                          drive_peak_v=float(np.max(np.abs(y))),
-                          clip_fraction=float(np.mean(clipped)),
-                          ai_peak_v=float(np.max(np.abs(ai))),
-                          block_rms_g=float(np.std(r)))
+        sd = StepResult(drive_rms_v=float(np.sqrt(np.mean(y**2))),
+                        drive_peak_v=float(np.max(np.abs(y))),
+                        clip_fraction=float(np.mean(clipped)),
+                        ai_peak_v=float(np.max(np.abs(ai))),
+                        block_rms_g=float(np.std(r)))
+        if self.displacement:
+            mm = self.sensor.mm_per_v * np.array([np.min(ai), np.max(ai)]) + self.sensor.offset_mm
+            sd.disp_min_mm, sd.disp_max_mm = float(mm.min()), float(mm.max())
+            # in-band acceleration of the latest frame; the time-domain rms would be in mm
+            sd.block_rms_g = self._frame_rms_g
+        return sd
 
     def _update_spectra(self) -> None:
         m = self.resp_hist.count
-        start = m - self.N - self.delay
-        if m < self.N or start < 0:
+        if m < self.N:
             return
-        y = self.resp_hist.get(m - self.N, m)
+        Y = self.spec.fft(self.resp_hist.get(m - self.N, m))
+        if self.y_weight is not None:
+            Y *= self.y_weight
+            self._frame_rms_g = self._band_rms(np.abs(Y) ** 2 * self.spec.scale)
+        start = m - self.N - self.delay
+        if start < 0:
+            return
         x = self.drive_hist.get(start, start + self.N)
         segs = self.seg_hist.get(start, start + self.N)
-        X, Y = self.spec.fft(x), self.spec.fft(y)
+        X = self.spec.fft(x)
         if np.any(x):
             self.frf.update(X, Y, self.spec.scale)
         seg = int(segs[0])
@@ -326,6 +348,7 @@ class Controller:
             self._check_stop()
             sd = self._step(zeros)
             self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            self.monitor.check_sensor_range(sd.disp_min_mm, sd.disp_max_mm)
 
     def _pretest_phase(self) -> None:
         self.state = State.PRETEST
@@ -337,6 +360,7 @@ class Controller:
             self._check_stop()
             sd = self._step(psd)
             self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            self.monitor.check_sensor_range(sd.disp_min_mm, sd.disp_max_mm)
             self.monitor.check_response(sd.block_rms_g)
             self._report(sd, None)
 
@@ -352,9 +376,11 @@ class Controller:
                 "h_mag_g_per_v": np.abs(self.frf.h1), "h_phase_deg": np.degrees(np.angle(self.frf.h1)),
                 "coherence": self.frf.coherence, "drive_v2_hz": self.frf.gxx,
                 "response_g2_hz": self.frf.gyy, "noise_g2_hz": self.noise.value})
+        chain = ("laser sensor, conditioner, mm_per_v" if self.displacement
+                 else "accelerometer, charge amplifier")
         if snr_db < pt.min_snr_db:
             raise AbortError(f"pretest: response {resp_rms:.3g} g rms is only {snr_db:.1f} dB above "
-                             f"the noise floor (check accelerometer, charge amplifier, amplifier)")
+                             f"the noise floor (check {chain}, amplifier)")
         if coh_mean < self.c.coherence_min:
             raise AbortError(f"pretest: mean coherence {coh_mean:.2f} < {self.c.coherence_min}")
 
@@ -381,6 +407,7 @@ class Controller:
             frames = self.seg_frames[self.seg]
 
             self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            self.monitor.check_sensor_range(sd.disp_min_mm, sd.disp_max_mm)
             self.monitor.check_response(sd.block_rms_g)
             if ev is not None and frames >= 2:
                 self.monitor.check_open_loop(sd.block_rms_g, ev.ref_rms_g)

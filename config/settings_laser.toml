@@ -1,15 +1,25 @@
-# Test settings: sensor, control, safety and pretest settings (independent of shaker and DAQ).
+# Test settings for a laser displacement sensor as the control sensor (low-frequency tests on
+# the USB-6211 until the accelerometer is available). Use with --settings config/settings_laser.toml.
+# The controller converts the displacement to acceleration per spectral line, so profiles,
+# tolerances and the shaker limits stay in g.
 
-# DAQ settings come from the device profile chosen with --daq (config/daq/*.toml, default
-# usb6211). DAQ settings can be overridden here, for example:
-# [daq]
-# device = "Dev2"
+# DAQ settings come from the device profile chosen with --daq (default usb6211). Here the
+# control rate is lowered for low-frequency tests: 100 kHz / 20 = 5 kHz, df = 1.22 Hz with
+# frame_size 4096. The decimation filter also removes the sensor's output steps (8 kHz rate).
+[daq]
+decimation = 20
+ai_range_v = 10.0              # the in-house conditioner outputs -10 .. +10 V (AI 1 / AI 9, DIFF)
 
 [sensor]
-type = "accelerometer"         # or "displacement" (laser sensor): see settings_laser.toml
-sensitivity_mv_per_g = 10.0    # sensitivity of the measurement chain at the DAQ input (mV/g):
-                               # the charge amplifier's output setting (mV/g, not its mV/pC gain),
-                               # or the IEPE accelerometer's calibrated sensitivity
+type = "displacement"
+mm_per_v = 1.0                 # PLACEHOLDER: calibrate. displacement = mm_per_v * V + offset_mm
+offset_mm = 0.0                # PLACEHOLDER: calibrate. Only used for the range abort below;
+                               # the offset does not affect control
+# range_min_mm = 0.0           # abort when the target leaves this window (e.g. the sensor's
+# range_max_mm = 10.0          # measuring range); set after calibrating offset_mm
+f_max_hz = 500.0               # pre-flight limit on the profile's f_hi: the sensor noise is
+                               # multiplied by (2 pi f)^2, so control is useful only up to a few
+                               # hundred Hz (ILD1420: 8 kHz rate, 0.5 um repeatability)
 
 [control]
 frame_size = 4096              # samples per frame at the control rate (df = fs / frame_size)

@@ -124,5 +124,9 @@ cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is o
 
 ## Status
 
+- Until the IEPE accelerometer is purchased, low-frequency hardware tests use a laser displacement
+  sensor through an undocumented in-house conditioner (-10 … +10 V) on the USB-6211
+  (`--settings config/settings_laser.toml`). Its `mm_per_v` and `offset_mm` are placeholders until
+  calibrated; keep the accelerometer path the default.
 - Only simulated runs and `check` have been done for the BK 4809 and BK 4801/4812 setups. `pretest` and `run` on
   real hardware are still untested; start with a low `--level` (for example `-12`).

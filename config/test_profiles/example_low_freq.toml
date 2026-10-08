@@ -1,0 +1,16 @@
+# Flat random profile, 0.42 g rms: low-frequency test with the laser displacement sensor
+# (config/settings_laser.toml). Displacement is about 0.3 mm p-p (3 sigma).
+name = "Flat 20-200 Hz, 0.001 g2/Hz"
+duration_s = 60.0
+
+breakpoints = [
+    { f_hz = 20.0, psd_g2_hz = 0.001 },
+    { f_hz = 200.0, psd_g2_hz = 0.001 },
+]
+
+[tolerance]
+alarm_db = 3.0
+abort_db = 6.0
+rms_alarm_db = 1.5
+rms_abort_db = 3.0
+max_abort_lines_pct = 5.0

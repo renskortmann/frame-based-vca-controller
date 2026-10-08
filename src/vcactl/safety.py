@@ -67,6 +67,9 @@ def preflight(profile: Profile, shaker: ShakerConfig, settings: Settings,
         check("profile f_hi <= 0.6 * fs/2", profile.f_hi, 0.3 * fs, "Hz"),
         check("profile f_lo >= 2 lines", profile.f_lo, 2 * df, "Hz", profile.f_lo >= 2 * df),
     )
+    sensor = settings.sensor
+    if sensor.type == "displacement":
+        checks += (check("profile f_hi <= sensor f_max", profile.f_hi, sensor.f_max_hz, "Hz"),)
     return PreflightReport(checks)
 
 
@@ -77,6 +80,7 @@ class RuntimeMonitor:
         self.s = settings.safety
         self.ai_range = settings.daq.ai_range_v
         self.shaker = shaker
+        self.sensor = settings.sensor
         self.low_response_blocks = 0
 
     def check_io(self, ai_peak_v: float, drive_rms_v: float, clip_fraction: float) -> None:
@@ -89,6 +93,15 @@ class RuntimeMonitor:
         if clip_fraction > self.s.max_clip_fraction:
             raise AbortError(f"drive clipping: {100 * clip_fraction:.2f}% of samples at "
                              f"+/-{self.shaker.max_drive_v:g} V")
+
+    def check_sensor_range(self, min_mm: float, max_mm: float) -> None:
+        """Displacement sensor: the target must stay inside the configured window."""
+        if self.sensor.type != "displacement":
+            return
+        lo, hi = self.sensor.range_min_mm, self.sensor.range_max_mm
+        if min_mm < lo or max_mm > hi:
+            raise AbortError(f"sensor range: displacement {min_mm:.3f} .. {max_mm:.3f} mm "
+                             f"outside [{lo:g}, {hi:g}] mm (target out of the laser's range?)")
 
     def check_response(self, response_rms_g: float) -> None:
         if response_rms_g > self.shaker.accel_random_rms_g:

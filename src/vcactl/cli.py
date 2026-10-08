@@ -102,9 +102,17 @@ def cmd_list_devices() -> int:
     return 0
 
 
+def _sensor_text(sensor) -> str:
+    if sensor.type == "displacement":
+        return (f"displacement ({sensor.mm_per_v:g} mm/V, offset {sensor.offset_mm:g} mm, "
+                f"range {sensor.range_min_mm:g} .. {sensor.range_max_mm:g} mm)")
+    return f"accelerometer ({sensor.sensitivity_mv_per_g:g} mV/g)"
+
+
 def cmd_check(args, settings, shaker, profile) -> int:
     report = preflight(profile, shaker, settings, args.level)
-    print(f"shaker : {shaker.name}\ndaq    : {settings.daq.model}\nprofile: {profile.name} at {args.level:+.1f} dB "
+    print(f"shaker : {shaker.name}\ndaq    : {settings.daq.model}\n"
+          f"sensor : {_sensor_text(settings.sensor)}\nprofile: {profile.name} at {args.level:+.1f} dB "
           f"({profile.f_lo:g}-{profile.f_hi:g} Hz, {profile.accel_rms_g() * 10 ** (args.level / 20):.3f} g rms)\n")
     print(report.format())
     print("\nPASS" if report.ok else "\nFAIL")
@@ -118,10 +126,14 @@ def cmd_run(args, settings, shaker, profile, pretest_only: bool) -> int:
         print("\npre-flight check FAILED; nothing was output")
         return 2
     if not args.sim and not args.yes:
+        check = ("the laser sensor alignment and stand, and mm_per_v/offset_mm"
+                 if settings.sensor.type == "displacement"
+                 else "the accelerometer mounting and the charge amplifier setting")
         print(f"\nAbout to drive {shaker.name} via {settings.daq.model} "
               f"{settings.daq.device}/{settings.daq.ao_channel} "
-              f"(max {shaker.max_drive_v:g} V).\nCheck the amplifier gain, the accelerometer "
-              "mounting and the charge amplifier setting.")
+              f"(max {shaker.max_drive_v:g} V).\n"
+              f"Control sensor: {_sensor_text(settings.sensor)}.\n"
+              f"Check the amplifier gain, {check}.")
         if input("Type 'yes' to start: ").strip().lower() != "yes":
             print("cancelled")
             return 1

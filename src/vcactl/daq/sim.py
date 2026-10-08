@@ -5,6 +5,7 @@ Model (acceleration per volt at the amplifier input):
     a/V = (G_amp * Bl / m) * s^2 / (s^2 + 2 z w1 s + w1^2) * w2^2 / (s^2 + (w2/Q) s + w2^2)
 
 w1 = suspension resonance (stiffness, moving mass + payload), w2 = armature resonance.
+With a displacement control sensor the model output is displacement (a = s^2 x).
 """
 
 from __future__ import annotations
@@ -19,14 +20,18 @@ from ..profile import G
 from .base import DaqFault
 
 
-def shaker_model_sos(shaker: ShakerConfig, payload_kg: float, fs: float) -> np.ndarray:
-    """Discrete-time (bilinear) model: amplifier input volts -> acceleration in g."""
+def shaker_model_sos(shaker: ShakerConfig, payload_kg: float, fs: float,
+                     output: str = "accel") -> np.ndarray:
+    """Discrete-time (bilinear) model: amplifier input volts -> acceleration in g
+    (``output="accel"``) or displacement in mm (``output="disp_mm"``)."""
     sim = shaker.sim
     m = shaker.moving_mass_kg + payload_kg
     w1 = np.sqrt(shaker.suspension_stiffness_n_per_mm * 1e3 / m)
     w2 = 2 * np.pi * shaker.armature_resonance_hz
     gain = sim.amp_gain_a_per_v * sim.bl_n_per_a / m / G
     z = [0.0, 0.0]
+    if output == "disp_mm":
+        z, gain = [], gain * G * 1e3
     p1 = np.roots([1.0, 2 * sim.suspension_zeta * w1, w1**2])
     p2 = np.roots([1.0, w2 / sim.armature_q, w2**2])
     k = gain * w2**2
@@ -41,11 +46,14 @@ class SimulatedDaq:
         self.fs_io = settings.daq.fs_io_hz
         self.ai_range = settings.daq.ai_range_v
         self.ao_range = settings.daq.ao_range_v
-        self.v_per_g = (sensor or settings.sensor).sensitivity_mv_per_g / 1000
+        self.sensor = sensor or settings.sensor
+        self.displacement = self.sensor.type == "displacement"
+        self.v_per_g = self.sensor.sensitivity_mv_per_g / 1000
         self.sim = shaker.sim
         self.delay_samples = self.sim.io_delay_samples + round(
             settings.daq.limits.filter_delay_samples)
-        self.sos = shaker_model_sos(shaker, settings.safety.payload_kg, self.fs_io)
+        self.sos = shaker_model_sos(shaker, settings.safety.payload_kg, self.fs_io,
+                                    "disp_mm" if self.displacement else "accel")
         self.zi = np.zeros((self.sos.shape[0], 2))
         self.rng = np.random.default_rng(seed)
         self.realtime = realtime
@@ -83,10 +91,13 @@ class SimulatedDaq:
                 time.sleep(delay)
         drive, self.queue = self.queue[:n], self.queue[n:]
         self.ao_value = float(drive[-1])
-        accel, self.zi = signal.sosfilt(self.sos, drive, zi=self.zi)
-        if self.sim.cubic_coeff:
-            accel = accel + self.sim.cubic_coeff * accel**3
-        volts = accel * self.v_per_g
+        out, self.zi = signal.sosfilt(self.sos, drive, zi=self.zi)
+        if self.displacement:
+            volts = (out - self.sensor.offset_mm) / self.sensor.mm_per_v
+        else:
+            if self.sim.cubic_coeff:
+                out = out + self.sim.cubic_coeff * out**3
+            volts = out * self.v_per_g
         t = self.samples_read / self.fs_io
         if self.disconnect_after_s is not None and t >= self.disconnect_after_s:
             volts = np.zeros(n)

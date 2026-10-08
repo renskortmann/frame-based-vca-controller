@@ -2,6 +2,7 @@ import dataclasses
 
 import pytest
 
+from conftest import ROOT
 from vcactl.config import ConfigError, load_shaker, load_settings, validate_setup, validate_settings
 
 
@@ -36,6 +37,26 @@ def test_settings_validation(settings, section, field, value):
     bad = dataclasses.replace(settings, **{section: dataclasses.replace(getattr(settings, section),
                                                                       **{field: value})})
     with pytest.raises(ConfigError):
+        validate_settings(bad)
+
+
+def test_laser_settings_load(laser_settings):
+    sensor = load_settings(ROOT / "config" / "settings_laser.toml").sensor
+    assert sensor.type == "displacement" and sensor.mm_per_v != 0
+    assert laser_settings.daq.model == "NI USB-6211"
+    assert laser_settings.fs_control_hz == 5000
+
+
+@pytest.mark.parametrize("fields,match", [
+    ({"type": "velocity"}, "sensor.type"),
+    ({"mm_per_v": 0.0}, "mm_per_v"),
+    ({"range_min_mm": 10.0, "range_max_mm": 0.0}, "range_min_mm"),
+    ({"f_max_hz": 0.0}, "f_max_hz"),
+])
+def test_sensor_validation(laser_settings, fields, match):
+    bad = dataclasses.replace(laser_settings,
+                              sensor=dataclasses.replace(laser_settings.sensor, **fields))
+    with pytest.raises(ConfigError, match=match):
         validate_settings(bad)
 
 
