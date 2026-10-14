@@ -1,0 +1,16 @@
+# Flat random profile, 0.55 g rms (about 2.5 g peak at 4.5 sigma): low-level test within the
+# +/-5 g range and 3 kHz band of the PCB 356B18 (--sensor pcb356b18).
+name = "Flat 20-3000 Hz, 0.0001 g2/Hz"
+duration_s = 60.0
+
+breakpoints = [
+    { f_hz = 20.0, psd_g2_hz = 0.0001 },
+    { f_hz = 3000.0, psd_g2_hz = 0.0001 },
+]
+
+[tolerance]
+alarm_db = 3.0
+abort_db = 6.0
+rms_alarm_db = 1.5
+rms_abort_db = 3.0
+max_abort_lines_pct = 5.0

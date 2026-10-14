@@ -5,11 +5,13 @@ import dataclasses
 import numpy as np
 import pytest
 
-from vcactl.config import load_settings
+from vcactl.config import load_settings, load_shaker
 from vcactl.controller import Controller, State
 from vcactl.daq.base import DaqFault
 from vcactl.daq.sim import SimulatedDaq
 from vcactl.logger import RunLogger
+from vcactl.profile import load_profile
+from conftest import PROFILES, TEST_SENSOR
 
 
 def run(settings, shaker, profile, *, duration=10.0, sim_kwargs=None, rows=None,
@@ -148,7 +150,7 @@ def test_logging(settings, tv51110, flat_profile, tmp_path):
 @pytest.mark.parametrize("daq", ["usb4431", "pxie4468"])
 def test_converges_on_dsa_devices(daq, tv51110, wideband_profile):
     """DSA devices add ~100 samples of converter filter delay; the controller compensates it."""
-    settings = load_settings(daq=daq)
+    settings = load_settings(daq=daq, sensor=TEST_SENSOR)
     ctl, backend, res = run(settings, tv51110, wideband_profile)
     assert res.completed and res.state == State.DONE, res.reason
     assert abs(res.rms_err_db) < 0.5
@@ -156,33 +158,13 @@ def test_converges_on_dsa_devices(daq, tv51110, wideband_profile):
     assert_safe_stop(tv51110, backend)
 
 
-def test_displacement_sensor_converges(laser_settings, tv51110, low_freq_profile):
-    rows = []
-    ctl, backend, res = run(laser_settings, tv51110, low_freq_profile, rows=rows)
+
+def test_low_g_run_with_pcb356b18():
+    """Default sensor (PCB 356B18, +/-5 g) on the BK 4809: the pretest and run stay in range."""
+    settings = load_settings()
+    shaker = load_shaker("bk4809")
+    profile = load_profile(PROFILES / "example_low_g.toml")
+    ctl, backend, res = run(settings, shaker, profile)
     assert res.completed and res.state == State.DONE, res.reason
     assert abs(res.rms_err_db) < 0.5
-    assert ctl.pretest_info["coherence_mean"] > 0.95
-    assert ctl.last_eval.lines_alarm <= 0.05 * ctl.last_eval.n_lines
-    # block rms is reported in g (in band), not in mm
-    run_rows = [r for r in rows if r["state"] == "run"]
-    assert run_rows[-1]["block_rms_g"] == pytest.approx(res.ref_rms_g, rel=0.3)
-    assert_safe_stop(tv51110, backend)
-
-
-def test_displacement_sensor_range_aborts(laser_settings, tv51110, low_freq_profile):
-    s = dataclasses.replace(laser_settings, sensor=dataclasses.replace(
-        laser_settings.sensor, range_min_mm=4.99, range_max_mm=5.01))
-    _, backend, res = run(s, tv51110, low_freq_profile)
-    assert not res.completed and "sensor range" in res.reason
-    assert_safe_stop(tv51110, backend)
-
-
-def test_displacement_sensor_disconnect_aborts(laser_settings, tv51110, low_freq_profile):
-    # 5 kHz control rate: noise + pretest take about 20 s, so disconnect during the run
-    _, backend, res = run(laser_settings, tv51110, low_freq_profile, duration=60.0,
-                          sim_kwargs={"disconnect_after_s": 40.0})
-    # the signal drops to 0 V: a step of offset_mm in displacement, which either collapses the
-    # coherence or leaves no in-band response; both must abort
-    assert not res.completed and res.state == State.ABORTED
-    assert "open loop" in res.reason or "coherence" in res.reason, res.reason
-    assert_safe_stop(tv51110, backend)
+    assert_safe_stop(shaker, backend)

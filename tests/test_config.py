@@ -2,7 +2,6 @@ import dataclasses
 
 import pytest
 
-from conftest import ROOT
 from vcactl.config import ConfigError, load_shaker, load_settings, validate_setup, validate_settings
 
 
@@ -32,31 +31,12 @@ def test_wrong_type_rejected(tmp_path):
     ("daq", "fs_io_hz", 300000.0),
     ("daq", "ai_terminal_config", "XYZ"),
     ("control", "correction_gain", 0.0),
+    ("sensor", "sensitivity_mv_per_g", 0.0),
 ])
 def test_settings_validation(settings, section, field, value):
     bad = dataclasses.replace(settings, **{section: dataclasses.replace(getattr(settings, section),
                                                                       **{field: value})})
     with pytest.raises(ConfigError):
-        validate_settings(bad)
-
-
-def test_laser_settings_load(laser_settings):
-    sensor = load_settings(ROOT / "config" / "settings_laser.toml").sensor
-    assert sensor.type == "displacement" and sensor.mm_per_v != 0
-    assert laser_settings.daq.model == "NI USB-6211"
-    assert laser_settings.fs_control_hz == 5000
-
-
-@pytest.mark.parametrize("fields,match", [
-    ({"type": "velocity"}, "sensor.type"),
-    ({"mm_per_v": 0.0}, "mm_per_v"),
-    ({"range_min_mm": 10.0, "range_max_mm": 0.0}, "range_min_mm"),
-    ({"f_max_hz": 0.0}, "f_max_hz"),
-])
-def test_sensor_validation(laser_settings, fields, match):
-    bad = dataclasses.replace(laser_settings,
-                              sensor=dataclasses.replace(laser_settings.sensor, **fields))
-    with pytest.raises(ConfigError, match=match):
         validate_settings(bad)
 
 
@@ -169,7 +149,7 @@ def test_shaker_drive_limits_validated(tmp_path, field, value, match):
 
 def test_pretest_drive_limited_by_shaker(settings, tv51110):
     with pytest.raises(ConfigError, match="pretest"):
-        validate_setup(settings, dataclasses.replace(tv51110, max_drive_rms_v=0.01,
+        validate_setup(settings, dataclasses.replace(tv51110, max_drive_rms_v=0.005,
                                                     max_drive_v=0.03))
 
 
@@ -186,3 +166,58 @@ def test_settings_daq_override(tmp_path):
 def test_missing_daq_profile():
     with pytest.raises(ConfigError, match="not found"):
         load_settings(daq="usb9999")
+
+
+def test_pcb356b18_is_default_sensor():
+    st = load_settings()
+    sn = st.sensor
+    assert sn.name.startswith("PCB 356B18") and sn.sensitivity_mv_per_g == 1048.0   # z axis
+    assert (sn.range_g_pk, sn.f_min_hz, sn.f_max_hz, sn.mass_kg) == (5.0, 0.5, 3000.0, 0.025)
+    assert (sn.iepe_min_ma, sn.iepe_max_ma) == (2.0, 20.0)
+    assert st.v_per_g == pytest.approx(1.048)
+    assert st.payload_total_kg == pytest.approx(st.safety.payload_kg + 0.025)
+
+
+def test_conditioner_gain(tmp_path):
+    p = tmp_path / "settings.toml"
+    p.write_text("[daq]\nconditioner_gain = 2.0\n")
+    assert load_settings(p).v_per_g == pytest.approx(2.096)
+
+
+def test_sensor_table_in_settings_rejected(tmp_path):
+    p = tmp_path / "settings.toml"
+    p.write_text("[sensor]\nsensitivity_mv_per_g = 10.0\n")
+    with pytest.raises(ConfigError, match="--sensor"):
+        load_settings(p)
+
+
+def test_missing_sensor():
+    with pytest.raises(ConfigError, match="not found"):
+        load_settings(sensor="nope")
+
+
+def test_iepe_current_checked_against_sensor():
+    st = load_settings(daq="usb4431")
+    on = dataclasses.replace(st, daq=dataclasses.replace(st.daq, iepe_current_ma=2.1,
+                                                         ai_coupling="AC"))
+    validate_settings(on)                       # 2.1 mA is inside the 356B18's 2-20 mA
+    with pytest.raises(ConfigError, match="outside"):
+        validate_settings(dataclasses.replace(on, sensor=dataclasses.replace(
+            on.sensor, iepe_min_ma=4.0)))
+    with pytest.raises(ConfigError, match="not an IEPE sensor"):
+        validate_settings(dataclasses.replace(on, sensor=dataclasses.replace(
+            on.sensor, iepe_min_ma=0.0, iepe_max_ma=0.0)))
+
+
+@pytest.mark.parametrize("field,value", [
+    ("range_g_pk", 0.0),
+    ("f_min_hz", 0.0),
+    ("f_max_hz", 0.5),                          # below f_min_hz
+    ("mass_kg", -0.01),
+    ("iepe_min_ma", 30.0),                      # above iepe_max_ma
+])
+def test_sensor_validation(settings, field, value):
+    bad = dataclasses.replace(settings, sensor=dataclasses.replace(settings.sensor,
+                                                                   **{field: value}))
+    with pytest.raises(ConfigError, match="sensor"):
+        validate_settings(bad)

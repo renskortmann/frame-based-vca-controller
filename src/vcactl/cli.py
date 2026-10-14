@@ -28,10 +28,13 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--daq", default="usb6211",
                    help="DAQ device key (usb6211, usb4431, pxie4468) or path to a DAQ TOML file "
                         "(default usb6211)")
+    p.add_argument("--sensor", default="pcb356b18",
+                   help="control accelerometer key (pcb356b18) or path to a sensor TOML file "
+                        "(default pcb356b18)")
     p.add_argument("--settings", "--station", dest="settings", default=None,
                    help=f"settings TOML (default: {DEFAULT_CONFIG_DIR / 'settings.toml'})")
     p.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR,
-                   help="directory containing shakers/*.toml and daq/*.toml")
+                   help="directory containing shakers/*.toml, daq/*.toml and sensors/*.toml")
     p.add_argument("--level", type=float, default=0.0,
                    help="target level in dB relative to the profile (default 0)")
 
@@ -112,11 +115,10 @@ def cmd_list_devices() -> int:
     return 0
 
 
-def _sensor_text(sensor) -> str:
-    if sensor.type == "displacement":
-        return (f"displacement ({sensor.mm_per_v:g} mm/V, offset {sensor.offset_mm:g} mm, "
-                f"range {sensor.range_min_mm:g} .. {sensor.range_max_mm:g} mm)")
-    return f"accelerometer ({sensor.sensitivity_mv_per_g:g} mV/g)"
+def _sensor_text(settings) -> str:
+    sn = settings.sensor
+    return (f"{sn.name} ({settings.v_per_g * 1000:g} mV/g at the DAQ input, "
+            f"+/-{sn.range_g_pk:g} g, {sn.f_min_hz:g}-{sn.f_max_hz:g} Hz)")
 
 
 def _profile_text(profile, level_db: float) -> str:
@@ -147,7 +149,7 @@ def make_controller(settings, shaker, profile, backend, **kwargs):
 def cmd_check(args, settings, shaker, profile) -> int:
     report = preflight(profile, shaker, settings, args.level)
     print(f"shaker : {shaker.name}\ndaq    : {settings.daq.model}\n"
-          f"sensor : {_sensor_text(settings.sensor)}\n"
+          f"sensor : {_sensor_text(settings)}\n"
           f"profile: {_profile_text(profile, args.level)}\n")
     print(report.format())
     print("\nPASS" if report.ok else "\nFAIL")
@@ -161,14 +163,12 @@ def cmd_run(args, settings, shaker, profile, pretest_only: bool) -> int:
         print("\npre-flight check FAILED; nothing was output")
         return 2
     if not args.sim and not args.yes:
-        check = ("the laser sensor alignment and stand, and mm_per_v/offset_mm"
-                 if settings.sensor.type == "displacement"
-                 else "the accelerometer mounting and the charge amplifier setting")
         print(f"\nAbout to drive {shaker.name} via {settings.daq.model} "
               f"{settings.daq.device}/{settings.daq.ao_channel} "
               f"(max {shaker.max_drive_v:g} V).\n"
-              f"Control sensor: {_sensor_text(settings.sensor)}.\n"
-              f"Check the amplifier gain, {check}.")
+              f"Control sensor: {_sensor_text(settings)}.\n"
+              "Check the amplifier gain, the accelerometer mounting and the charge amplifier "
+              "setting.")
         if input("Type 'yes' to start: ").strip().lower() != "yes":
             print("cancelled")
             return 1
@@ -233,7 +233,7 @@ def main(argv=None) -> int:
     if args.cmd == "list-devices":
         return cmd_list_devices()
     try:
-        settings = load_settings(args.settings, args.daq, args.config_dir)
+        settings = load_settings(args.settings, args.daq, args.config_dir, args.sensor)
         shaker = load_shaker(args.shaker, args.config_dir)
         profile = load_profile(args.profile)
         validate_setup(settings, shaker)

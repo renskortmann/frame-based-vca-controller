@@ -5,13 +5,15 @@
 model = "NI USB-6211"
 device = "Dev1"                # NI device name as shown by `vcactl list-devices` / NI MAX
 ao_channel = "ao0"             # -> amplifier input (AO 0 pin 12, AO GND pin 14)
-ai_channel = "ai1"             # <- charge amplifier output
+ai_channel = "ai1"             # <- IEPE conditioner output (or charge amplifier output)
 ai_terminal_config = "DIFF"    # DIFF (AI1+/AI9-), RSE or NRSE
 ai_range_v = 10.0              # ranges: 0.2, 1, 5, 10
 ao_range_v = 10.0              # fixed +/-10 V
 fs_io_hz = 100000.0            # AI/AO rate; 20 MHz / fs_io_hz must be an integer
 decimation = 4                 # control rate = fs_io_hz / decimation (25 kHz)
 ao_queue_blocks = 2            # half-frames queued ahead in the AO buffer (latency vs. underrun margin)
+conditioner_gain = 1.0         # gain of the external IEPE conditioner (sensor mV/g * gain at AI);
+                               # keep 1 with the 1000 mV/g PCB 356B18
 
 [limits]
 ai_ranges_v = [0.2, 1.0, 5.0, 10.0]

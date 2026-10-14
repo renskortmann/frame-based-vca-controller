@@ -1,0 +1,26 @@
+# PCB Piezotronics 356B18: triaxial ICP (IEPE) accelerometer, high sensitivity, ceramic shear.
+# Values from Controller + DAQ/PCB accelerometers/356b18.pdf (spec sheet Rev H, manual 21354)
+# in the Nextcloud project folder.
+# Select with --sensor pcb356b18 (the default).
+#
+# Serial LW266119. Calibrated sensitivities: x 980, y 1054, z 1048 mV/g (nominal 1000 +/-10 %).
+# The controller reads one axis: the z axis, along the shaker's motion. To control on another
+# axis, connect that axis and change sensitivity_mv_per_g to its value.
+#
+# Not checked by the controller:
+# - Output bias 8-12 V DC: use AC coupling (USB-4431/PXIe-4468 with IEPE on) or the AC-coupled
+#   output of the external IEPE conditioner (USB-6211).
+# - Settling time < 12 s (discharge time constant 0.8-3 s) after the IEPE excitation is switched
+#   on: wait before starting a pretest.
+# - 1/4-28 4-pin connector: needs a 4-pin to 3 x BNC breakout cable; connect only the control axis.
+# - Transverse sensitivity <= 5 %, non-linearity <= 1 %, broadband resolution 0.00005 g rms
+#   (1-10000 Hz); spectral noise 11.4 / 4.0 / 1.2 / 0.4 ug/sqrt(Hz) at 1 / 10 / 100 / 1000 Hz.
+# - Mounting: 10-32 stud (081B05, or M081B05 to M6) or the adhesive base 080A68.
+name = "PCB 356B18 (LW266119, z)"
+sensitivity_mv_per_g = 1048.0      # z axis, calibrated
+range_g_pk = 5.0                   # measurement range +/-5 g pk (overload limit 5000 g pk shock)
+f_min_hz = 0.5                     # +/-5 %: 0.5-3000 Hz (+/-10 %: 0.3-4000 Hz on y/z, 3500 Hz on x)
+f_max_hz = 3000.0                  # resonance >= 20 kHz
+mass_kg = 0.025                    # added to safety.payload_kg
+iepe_min_ma = 2.0                  # constant current excitation 2-20 mA (20-30 V DC)
+iepe_max_ma = 20.0

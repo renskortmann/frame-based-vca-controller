@@ -18,28 +18,50 @@ This file only records what is not obvious from the code or README.
   Nextcloud project folder (see "Documents outside the repo"), which is the second folder of the
   VS Code workspace `frame-based-vca-controller.code-workspace` (git-ignored on purpose; don't add
   it). Read PDFs with `pdftotext -layout`, or `pypdf` where poppler is not installed. Shaker and
-  DAQ profile values must come from them. The `docs/...` paths in the config file comments are
+  DAQ profile and sensor values must come from them. The `docs/...` paths in the config file comments are
   the old locations; the file names are unchanged.
 
-## Shaker, DAQ + settings configs
+## Shaker, DAQ, sensor + settings configs
 
-Three files combine into one run, each selected separately:
+Four files combine into one run, each selected separately:
 
 - Shaker (`--shaker`, `config/shakers/*.toml`): the exciter, its amplifier gain and the drive
   limits at the amplifier input (`max_drive_v`, `max_drive_rms_v`).
 - DAQ (`--daq`, `config/daq/*.toml`, default `usb6211`): device settings plus `[limits]` with the
   data-sheet capabilities that settings are validated against (ranges, allowed rates, coupling,
   IEPE, AO sync method, converter filter delay). The settings file can override DAQ settings in a
-  `[daq]` table, but never `model` or `[limits]`.
-- Settings (`--settings`, default `config/settings.toml`; `--station` is an old alias): sensor,
-  control tuning, pretest and the shaker-independent safety settings (payload, clipping,
-  open-loop and overload aborts).
+  `[daq]` table, but never `model` or `[limits]`. `conditioner_gain` is the gain of an
+  external IEPE conditioner (USB-6211).
+- Sensor (`--sensor`, `config/sensors/*.toml`, default `pcb356b18`): the control accelerometer's
+  calibrated sensitivity, range, frequency range, mass and IEPE current range. Settings files
+  may not have a `[sensor]` table (the loader rejects it).
+- Settings (`--settings`, default `config/settings.toml`; `--station` is an old alias): control
+  tuning, pretest and the shaker-independent safety settings (payload, clipping, open-loop and
+  overload aborts).
 
 Anything that depends on the amplifier belongs in the shaker file, so that no settings/shaker
 combination can be wrong. `validate_setup` (called by the CLI and the `Controller`) checks the
 cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is only +/-3.5 V) and
 `pretest.drive_rms_v` <= shaker `max_drive_rms_v`. `load_shaker` checks
-`max_drive_rms_v` <= `max_drive_v` and <= `amp_input_full_v`.
+`max_drive_rms_v` <= `max_drive_v` and <= `amp_input_full_v`. `validate_settings` checks a
+DAQ IEPE current against the sensor's IEPE range. The pre-flight check compares the band with
+the sensor's frequency range and the acceleration peak (`safety.accel_crest_factor` x rms for
+random) with `range_g_pk`; the runtime monitor aborts on a measured peak above it. The payload
+in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
+(`Settings.payload_total_kg`); the chain sensitivity is `Settings.v_per_g`.
+
+### PCB 356B18 (default sensor)
+
+- Serial LW266119; calibration from the user: x 980, y 1054, z 1048 mV/g. The z axis closes the
+  loop (`sensitivity_mv_per_g = 1048`); the others are only in the file's comments.
+- Intended for low-frequency, low-g tests: +/-5 g, 0.5-3000 Hz (+/-5 %). The shared
+  `pretest.drive_rms_v` was lowered from 0.05 to 0.01 V for it: at 0.05 V the simulated pretest
+  peaks above 5 g on the BK 4809 and BK 4801/4812. The higher-level example profiles
+  (`example_flat`, `example_sloped`, `example_wideband`) fail its range check; they wait for the
+  second, less sensitive and wider-band accelerometer, which gets its own sensor file and probably
+  becomes the default.
+- Tests mostly use `tests/data/sensor_test.toml` (10 mV/g, +/-500 g, 1-10000 Hz) so that they are
+  not limited by the 356B18.
 
 ### DAQ device notes
 
@@ -91,7 +113,7 @@ cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is o
   actual gain G must be measured (1 kHz sine); then `amp_input_full_v = 10 / G`, both drive
   limits scale by the same factor, and `[sim] amp_gain_a_per_v = G / 2`. Update them together.
   With the attenuator fully clockwise the full rating would be at 0.11 V rms, and the shared
-  `pretest.drive_rms_v = 0.05` would already drive ~45 % of the rating.
+  `pretest.drive_rms_v = 0.01` would already drive ~9 % of the rating.
 - Drive limits: `max_drive_v = 2.7` (peak clip, about 3 sigma of the rms limit) and
   `max_drive_rms_v = 0.88` (80 % of the 1.1 V rms rating).
 - `f_min_hz = 20`: the P-2000 is specified 20 Hz - 20 kHz (+0.1/-3 dB), with a subsonic
@@ -148,9 +170,7 @@ cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is o
   They control the base (one AI channel); response-controlled and phase-resonant sine (as in
   the TRC joint-damping tests) need a second AI channel and are deferred.
 
-- Until the IEPE accelerometer is purchased, low-frequency hardware tests use a laser displacement
-  sensor through an undocumented in-house conditioner (-10 … +10 V) on the USB-6211
-  (`--settings config/settings_laser.toml`). Its `mm_per_v` and `offset_mm` are placeholders until
-  calibrated; keep the accelerometer path the default.
+- The laser displacement sensor as control sensor (commit dfadd62) was dropped on 2026-10-14 and
+  its code and config removed; the loop is always closed with the accelerometer.
 - Only simulated runs and `check` have been done for the BK 4809 and BK 4801/4812 setups. `pretest` and `run` on
   real hardware are still untested; start with a low `--level` (for example `-12`).

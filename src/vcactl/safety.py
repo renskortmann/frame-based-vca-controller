@@ -51,16 +51,19 @@ def preflight(profile: Profile | SineProfile, shaker: ShakerConfig, settings: Se
     a_rms = profile.accel_rms_g() * k
     v_pk = profile.velocity_rms_m_s() * k * sigma
     d_pp_mm = 2 * profile.displacement_rms_m() * k * sigma * 1e3
-    mass = shaker.moving_mass_kg + settings.safety.payload_kg
+    mass = shaker.moving_mass_kg + settings.payload_total_kg
     force = mass * a_rms * G
+    crest = settings.safety.accel_crest_factor
+    sensor = settings.sensor
 
     def check(name, value, limit, unit, ok=None):
         return Check(name, value, limit, unit, value <= limit if ok is None else ok)
 
     checks = (
-        check("payload <= static max", settings.safety.payload_kg,
+        check("payload <= static max", settings.payload_total_kg,
               shaker.payload_static_max_kg, "kg"),
         check("accel rms", a_rms, shaker.accel_random_rms_g, "g"),
+        check(f"accel peak ({crest:g} s) <= sensor", a_rms * crest, sensor.range_g_pk, "g"),
         check("force rms (m_total*a)", force, shaker.force_random_rms_n, "N"),
         check(f"velocity peak ({sigma:g} sigma)", v_pk, shaker.velocity_peak_m_s, "m/s"),
         check(f"displacement p-p ({sigma:g} s)", d_pp_mm, shaker.displacement_pp_mm, "mm"),
@@ -70,10 +73,10 @@ def preflight(profile: Profile | SineProfile, shaker: ShakerConfig, settings: Se
               profile.f_hi <= shaker.f_max_hz),
         check("profile f_hi <= 0.6 * fs/2", profile.f_hi, 0.3 * fs, "Hz"),
         check("profile f_lo >= 2 lines", profile.f_lo, 2 * df, "Hz", profile.f_lo >= 2 * df),
+        check("profile f_lo >= sensor f_min", profile.f_lo, sensor.f_min_hz, "Hz",
+              profile.f_lo >= sensor.f_min_hz),
+        check("profile f_hi <= sensor f_max", profile.f_hi, sensor.f_max_hz, "Hz"),
     )
-    sensor = settings.sensor
-    if sensor.type == "displacement":
-        checks += (check("profile f_hi <= sensor f_max", profile.f_hi, sensor.f_max_hz, "Hz"),)
     return PreflightReport(checks)
 
 
@@ -91,15 +94,17 @@ def preflight_sine(profile: SineProfile, shaker: ShakerConfig, settings: Setting
     a_pk = float(np.max(profile.accel_pk_g(f))) * k
     v_pk = float(np.max(profile.velocity_pk_m_s(f))) * k
     d_pp = float(np.max(profile.displacement_pp_mm(f))) * k
-    force = (shaker.moving_mass_kg + settings.safety.payload_kg) * a_pk * G
+    force = (shaker.moving_mass_kg + settings.payload_total_kg) * a_pk * G
+    sensor = settings.sensor
 
     def check(name, value, limit, unit, ok=None):
         return Check(name, value, limit, unit, value <= limit if ok is None else ok)
 
     checks = (
-        check("payload <= static max", settings.safety.payload_kg,
+        check("payload <= static max", settings.payload_total_kg,
               shaker.payload_static_max_kg, "kg"),
         check("accel peak", a_pk, shaker.accel_sine_peak_g, "g"),
+        check("accel peak <= sensor range", a_pk, sensor.range_g_pk, "g"),
         check("force peak (m_total*a)", force, shaker.force_sine_peak_n, "N"),
         check("velocity peak", v_pk, shaker.velocity_peak_m_s, "m/s"),
         check("displacement p-p", d_pp, shaker.displacement_pp_mm, "mm"),
@@ -109,10 +114,10 @@ def preflight_sine(profile: SineProfile, shaker: ShakerConfig, settings: Setting
               profile.f_hi <= shaker.f_max_hz),
         check("profile f_hi <= 0.6 * fs/2", profile.f_hi, 0.3 * fs, "Hz"),
         check("profile f_lo >= 2 lines", profile.f_lo, 2 * df, "Hz", profile.f_lo >= 2 * df),
+        check("profile f_lo >= sensor f_min", profile.f_lo, sensor.f_min_hz, "Hz",
+              profile.f_lo >= sensor.f_min_hz),
+        check("profile f_hi <= sensor f_max", profile.f_hi, sensor.f_max_hz, "Hz"),
     )
-    if settings.sensor.type == "displacement":
-        checks += (check("profile f_hi <= sensor f_max", profile.f_hi,
-                         settings.sensor.f_max_hz, "Hz"),)
     return PreflightReport(checks)
 
 
@@ -124,27 +129,22 @@ class RuntimeMonitor:
         self.ai_range = settings.daq.ai_range_v
         self.shaker = shaker
         self.sensor = settings.sensor
+        self.v_per_g = settings.v_per_g
         self.low_response_blocks = 0
 
     def check_io(self, ai_peak_v: float, drive_rms_v: float, clip_fraction: float) -> None:
         if ai_peak_v >= self.s.ai_overload_fraction * self.ai_range:
             raise AbortError(f"AI overload: {ai_peak_v:.2f} V on the {self.ai_range:g} V range "
                              "(check charge amplifier range/sensitivity)")
+        if ai_peak_v / self.v_per_g > self.sensor.range_g_pk:
+            raise AbortError(f"sensor over range: {ai_peak_v / self.v_per_g:.2f} g peak exceeds "
+                             f"the {self.sensor.name} range {self.sensor.range_g_pk:g} g")
         if drive_rms_v > self.shaker.max_drive_rms_v:
             raise AbortError(f"drive rms {drive_rms_v:.3f} V exceeds limit "
                              f"{self.shaker.max_drive_rms_v:.3f} V")
         if clip_fraction > self.s.max_clip_fraction:
             raise AbortError(f"drive clipping: {100 * clip_fraction:.2f}% of samples at "
                              f"+/-{self.shaker.max_drive_v:g} V")
-
-    def check_sensor_range(self, min_mm: float, max_mm: float) -> None:
-        """Displacement sensor: the target must stay inside the configured window."""
-        if self.sensor.type != "displacement":
-            return
-        lo, hi = self.sensor.range_min_mm, self.sensor.range_max_mm
-        if min_mm < lo or max_mm > hi:
-            raise AbortError(f"sensor range: displacement {min_mm:.3f} .. {max_mm:.3f} mm "
-                             f"outside [{lo:g}, {hi:g}] mm (target out of the laser's range?)")
 
     def check_response(self, response_rms_g: float) -> None:
         if response_rms_g > self.shaker.accel_random_rms_g:

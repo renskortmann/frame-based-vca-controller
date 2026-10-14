@@ -1,9 +1,8 @@
-"""Loading and validation of TOML configuration files (shakers, DAQ devices, settings)."""
+"""Loading and validation of TOML configuration files (shakers, DAQ devices, sensors, settings)."""
 
 from __future__ import annotations
 
 import dataclasses
-import math
 import sys
 import typing
 from dataclasses import dataclass, field
@@ -91,24 +90,20 @@ class DaqConfig:
     fs_io_hz: float = 100000.0
     decimation: int = 4
     ao_queue_blocks: int = 2
-
-
-SENSOR_TYPES = ("accelerometer", "displacement")
+    conditioner_gain: float = 1.0         # gain of an external IEPE conditioner between sensor and AI
 
 
 @dataclass(frozen=True)
 class SensorConfig:
-    """Control sensor: an accelerometer (mV/g) or a displacement sensor (mm/V).
-
-    A displacement signal is converted to acceleration per spectral line by the controller.
-    """
-    type: str = "accelerometer"           # "accelerometer" or "displacement"
-    sensitivity_mv_per_g: float = 10.0    # accelerometer chain sensitivity at the DAQ input
-    mm_per_v: float = 0.0                 # displacement: mm = mm_per_v * V + offset_mm
-    offset_mm: float = 0.0
-    range_min_mm: float = -math.inf       # displacement: abort outside this window
-    range_max_mm: float = math.inf
-    f_max_hz: float = math.inf            # displacement: usable sensor bandwidth (pre-flight)
+    """Control accelerometer, from its data sheet and calibration."""
+    name: str
+    sensitivity_mv_per_g: float           # calibrated sensitivity of the axis used for control
+    range_g_pk: float                     # measurement range
+    f_min_hz: float                       # frequency range (data-sheet tolerance band)
+    f_max_hz: float
+    mass_kg: float = 0.0                  # added to safety.payload_kg
+    iepe_min_ma: float = 0.0              # IEPE excitation current range; 0, 0 = not IEPE
+    iepe_max_ma: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -146,6 +141,7 @@ class SafetyConfig:
     max_clip_fraction: float = 0.005
     payload_kg: float = 0.02
     displacement_sigma: float = 3.0
+    accel_crest_factor: float = 4.5
     open_loop_db: float = 12.0
     ai_overload_fraction: float = 0.98
     abort_rampdown_s: float = 0.05
@@ -162,7 +158,7 @@ class PretestConfig:
 @dataclass(frozen=True)
 class Settings:
     daq: DaqConfig
-    sensor: SensorConfig = field(default_factory=SensorConfig)
+    sensor: SensorConfig
     control: ControlConfig = field(default_factory=ControlConfig)
     sine: SineConfig = field(default_factory=SineConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
@@ -171,6 +167,16 @@ class Settings:
     @property
     def fs_control_hz(self) -> float:
         return self.daq.fs_io_hz / self.daq.decimation
+
+    @property
+    def v_per_g(self) -> float:
+        """Sensitivity of the measurement chain at the DAQ input."""
+        return self.sensor.sensitivity_mv_per_g * self.daq.conditioner_gain / 1000
+
+    @property
+    def payload_total_kg(self) -> float:
+        """Mass on the armature: fixture and specimen plus the control sensor."""
+        return self.safety.payload_kg + self.sensor.mass_kg
 
 
 def build_dataclass(cls, table: dict, where: str):
@@ -264,21 +270,26 @@ def load_shaker(name_or_path: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> Sha
 
 
 def load_settings(path: Path | str | None = None, daq: str = "usb6211",
-                 config_dir: Path = DEFAULT_CONFIG_DIR) -> Settings:
-    """Load a settings file and combine it with the DAQ device profile ``daq``.
+                 config_dir: Path = DEFAULT_CONFIG_DIR, sensor: str = "pcb356b18") -> Settings:
+    """Load a settings file and combine it with the DAQ device profile ``daq`` and the
+    sensor file ``sensor``.
 
     The settings file may have a ``[daq]`` table that overrides settings of the DAQ profile
     (for example ``device`` or ``ai_channel``), but not its ``[limits]``.
     """
     path = Path(path) if path else DEFAULT_CONFIG_DIR / "settings.toml"
     daq_path = resolve_config_path(daq, "daq", config_dir)
+    sensor_path = resolve_config_path(sensor, "sensors", config_dir)
     table = read_toml(path)
     daq_table = read_toml(daq_path)
     overrides = table.get("daq", {})
     if not isinstance(overrides, dict) or "limits" in overrides or "model" in overrides:
         raise ConfigError(f"{path}: [daq] may only override DAQ settings, not model or limits")
-    table = {**table, "daq": {**daq_table, **overrides}}
-    where = f"{path} + {daq_path}"
+    if "sensor" in table:
+        raise ConfigError(f"{path}: [sensor] is no longer a settings table; the sensor is "
+                          "selected with --sensor (config/sensors/*.toml)")
+    table = {**table, "daq": {**daq_table, **overrides}, "sensor": read_toml(sensor_path)}
+    where = f"{path} + {daq_path} + {sensor_path}"
     cfg = build_dataclass(Settings, table, where)
     validate_settings(cfg, where)
     return cfg
@@ -331,9 +342,22 @@ def validate_daq(d: DaqConfig, where: str = "daq") -> None:
                               f"({d.model})")
     if d.decimation < 1:
         raise ConfigError(f"{where}: daq.decimation must be >= 1")
+    if d.conditioner_gain <= 0:
+        raise ConfigError(f"{where}: daq.conditioner_gain must be > 0")
     if not lim.antialias_filter and d.decimation < 2:
         raise ConfigError(f"{where}: daq.decimation must be >= 2: the {d.model} has no "
                           "anti-aliasing filter, so AI must be oversampled and filtered digitally")
+
+
+def validate_sensor(sn: SensorConfig, where: str = "sensor") -> None:
+    if sn.sensitivity_mv_per_g <= 0 or sn.range_g_pk <= 0:
+        raise ConfigError(f"{where}: sensor.sensitivity_mv_per_g and range_g_pk must be > 0")
+    if not 0 < sn.f_min_hz < sn.f_max_hz:
+        raise ConfigError(f"{where}: sensor.f_min_hz must be > 0 and < f_max_hz")
+    if sn.mass_kg < 0:
+        raise ConfigError(f"{where}: sensor.mass_kg must be >= 0")
+    if not 0 <= sn.iepe_min_ma <= sn.iepe_max_ma:
+        raise ConfigError(f"{where}: sensor.iepe_min_ma must be >= 0 and <= iepe_max_ma")
 
 
 def validate_settings(cfg: Settings, where: str = "settings") -> None:
@@ -349,18 +373,16 @@ def validate_settings(cfg: Settings, where: str = "settings") -> None:
         raise ConfigError(f"{where}: control.dof/control_dof must be >= 2, frf_averages >= 1")
     if c.start_level_db > 0 or c.level_step_db <= 0:
         raise ConfigError(f"{where}: control.start_level_db must be <= 0 and level_step_db > 0")
-    sn = cfg.sensor
-    if sn.type not in SENSOR_TYPES:
-        raise ConfigError(f"{where}: sensor.type must be one of {_fmt(SENSOR_TYPES)}")
-    if sn.type == "accelerometer" and sn.sensitivity_mv_per_g <= 0:
-        raise ConfigError(f"{where}: sensor.sensitivity_mv_per_g must be > 0")
-    if sn.type == "displacement":
-        if sn.mm_per_v == 0 or not math.isfinite(sn.mm_per_v):
-            raise ConfigError(f"{where}: sensor.mm_per_v must be a non-zero number")
-        if not sn.range_min_mm < sn.range_max_mm:
-            raise ConfigError(f"{where}: sensor.range_min_mm must be < range_max_mm")
-        if sn.f_max_hz <= 0:
-            raise ConfigError(f"{where}: sensor.f_max_hz must be > 0")
+    validate_sensor(cfg.sensor, where)
+    if d.iepe_current_ma > 0:
+        sn = cfg.sensor
+        if sn.iepe_max_ma <= 0:
+            raise ConfigError(f"{where}: daq.iepe_current_ma = {d.iepe_current_ma:g} mA, but "
+                              f"the {sn.name} is not an IEPE sensor")
+        if not sn.iepe_min_ma <= d.iepe_current_ma <= sn.iepe_max_ma:
+            raise ConfigError(f"{where}: daq.iepe_current_ma = {d.iepe_current_ma:g} mA is "
+                              f"outside the {sn.name} range {sn.iepe_min_ma:g}-"
+                              f"{sn.iepe_max_ma:g} mA")
     sc = cfg.sine
     if not 0 < sc.correction_gain <= 1:
         raise ConfigError(f"{where}: sine.correction_gain must be in (0, 1]")

@@ -4,9 +4,8 @@
 optional **ring-down**) tests on a TIRA **TV 51110** or **TV 52110**
 (each with a BDA 120 power amplifier), a **BK 4809** with a DAP-Audio Palladium P-2000 amplifier,
 or a **BK 4801** body with **4812** general purpose head and a BK 2707 amplifier. The drive goes
-out through an **NI USB-4431**, **NI PXIe-4468** or **NI USB-6211**, and the loop is closed with an
-**IEPE accelerometer**, whichever DAQ is used. The control band reaches **7 kHz**. For
-low-frequency tests a **laser displacement sensor** can close the loop instead (see below). It runs
+out through an **NI USB-4431**, **NI PXIe-4468** or **NI USB-6211**, and the loop is always closed
+with an **IEPE accelerometer**, whichever DAQ is used. The control band reaches **7 kHz**. It runs
 on **Windows 11** and **native Linux**, and includes a simulated shaker for development without
 hardware.
 
@@ -15,12 +14,12 @@ hardware.
 
 The third-party datasheets and manuals (shakers, amplifiers, DAQs, sensors) are not in this
 repository. They are in the project's Nextcloud folder (`CSAA04 HF Shakers (Alessandro)`):
-`Shakers/` and `Controller + DAQ/`. The source comments in `config/shakers/*.toml` and
-`config/daq/*.toml` refer to them by file name.
+`Shakers/` and `Controller + DAQ/`. The source comments in `config/shakers/*.toml`,
+`config/daq/*.toml` and `config/sensors/*.toml` refer to them by file name.
 
 ## Hardware setup
 
-The control sensor is normally an IEPE accelerometer, mounted on the shaker table or fixture next
+The control sensor is always an IEPE accelerometer, mounted on the shaker table or fixture next
 to the specimen. How it is powered depends on the DAQ:
 
 - **USB-4431 / PXIe-4468:** connect the accelerometer directly to AI 0 (BNC) and switch on the
@@ -46,12 +45,45 @@ Power sequence, which matters because the USB-6211 AO glitches by about ±1 V fo
    position for the whole test, because the pretest measures the system with that gain.
 3. When finished, switch the amplifier **off before** unplugging USB or shutting down the PC.
 
-Set `sensor.sensitivity_mv_per_g` in `config/settings.toml` to the sensitivity of the measurement
-chain at the DAQ input, in mV/g: the accelerometer's calibrated sensitivity, multiplied by the
-conditioner gain if the conditioner has one (USB-6211). Choose the accelerometer (and the
-conditioner gain) so that the expected peak response (about 4–5 × rms) stays inside
-`daq.ai_range_v`, and inside the input range of any other instrument that shares the signal.
-For example, 10 mV/g at 30 g rms gives peaks around 1.5 V on the 10 V range.
+### Sensor files (`config/sensors/*.toml`)
+
+The accelerometer is selected with `--sensor` (default `pcb356b18`). Its file holds the
+calibrated sensitivity of the axis used for control (`sensitivity_mv_per_g`), the measurement
+range (`range_g_pk`), the frequency range (`f_min_hz`, `f_max_hz`), the mass (`mass_kg`, added
+to `safety.payload_kg`) and the IEPE excitation range (`iepe_min_ma`, `iepe_max_ma`). The
+controller uses them as follows:
+
+- The sensitivity at the DAQ input is `sensitivity_mv_per_g` × `daq.conditioner_gain`. The
+  conditioner gain (default 1) is for an external IEPE conditioner with gain (USB-6211).
+- The pre-flight check fails if the profile's band is outside the sensor's frequency range, or
+  if the expected acceleration peak exceeds `range_g_pk`. For random profiles the expected peak
+  is `safety.accel_crest_factor` (4.5) × rms; for sine profiles it is the sine peak.
+- A test aborts when the measured peak exceeds `range_g_pk`.
+- With IEPE excitation from the DAQ, `daq.iepe_current_ma` must lie within the sensor's IEPE
+  range.
+
+Choose the accelerometer (and the conditioner gain) so that the expected peak response also
+stays inside `daq.ai_range_v`, and inside the input range of any other instrument that shares
+the signal.
+
+**PCB 356B18** (`pcb356b18`, serial LW266119): a triaxial, high-sensitivity sensor for
+low-frequency, low-level tests: 1000 mV/g nominal, ±5 g, 0.5–3000 Hz (±5 %), 25 g. Only one axis
+closes the loop: z (1048 mV/g calibrated). The file also lists the x (980) and y (1054)
+calibrations. Notes:
+
+- It needs a 4-pin (1/4-28) to 3 × BNC breakout cable. Connect only the control axis.
+- The output carries an 8–12 V bias. Use AC coupling: IEPE from the USB-4431 (2.1 mA) or the
+  PXIe-4468 (4, 10 or 20 mA), or the AC-coupled output of an external conditioner on the
+  USB-6211.
+- Wait at least 12 s after switching on the IEPE excitation before starting a pretest; the
+  output needs that long to settle.
+- 1 V/g leaves little room: a 0.55 g rms random test (`example_low_g.toml`) already peaks near
+  2.5 g. The default `pretest.drive_rms_v` (0.01 V) keeps the pretest within ±5 g on every
+  shaker; at 0.05 V the BK shakers exceed it.
+
+A less sensitive, wider-band accelerometer will get its own file later for the higher-level
+example profiles (`example_flat`, `example_sloped`, `example_wideband`), which fail the
+356B18's range check.
 
 **BK 4809 with the Palladium P-2000.** The P-2000 is an audio amplifier: voltage mode, no current
 limit, and 91× gain with the attenuator fully clockwise, which would reach the 4809's 5 A rms
@@ -63,30 +95,6 @@ the only protection of the coil, so leave the attenuator untouched between prete
 amplifier is specified from 20 Hz (subsonic protection at 10 Hz), so profiles start at 20 Hz or
 higher. Connect the DAQ AO with a mono (TS) jack as the manual's unbalanced input: tip to AO 0,
 sleeve to AO GND. Measure the gain with the same cable.
-
-### Laser displacement sensor (low-frequency testing)
-
-Until an accelerometer is available, a laser displacement sensor (e.g. Micro-Epsilon optoNCDT
-1420) can close the loop on the USB-6211 for low-frequency tests. The in-house conditioner
-turns the sensor output into -10 … +10 V; connect it to AI 1 / AI 9 (differential), like the
-IEPE conditioner above. Use `--settings config/settings_laser.toml`:
-
-- `sensor.type = "displacement"`. The controller converts displacement to acceleration per
-  spectral line ((2πf)²), so profiles, tolerances, logs and shaker limits stay in g.
-- `sensor.mm_per_v` and `sensor.offset_mm` (displacement = `mm_per_v` × V + `offset_mm`) are
-  **placeholders** until calibrated. Put the target at two known positions (gauge blocks or a
-  micrometer), read the voltage (NI MAX test panel), and calculate the slope and offset. The sign
-  of `mm_per_v` does not matter for control.
-- `sensor.range_min_mm` / `range_max_mm` (off by default) abort the test when the target leaves
-  this window, for example the sensor's measuring range; the sensor output is undefined outside it.
-  Set them after calibrating `offset_mm`.
-- `sensor.f_max_hz` (500 Hz) limits the profile's upper frequency in the pre-flight check. The
-  sensor noise is multiplied by (2πf)², so above a few hundred Hz it swamps the control signal.
-- The settings lower the control rate to 5 kHz (`daq.decimation = 20`, Δf = 1.22 Hz), which also
-  filters out the sensor's 8 kHz output steps.
-- Mount the sensor on a stand that does not pick up the shaker's reaction forces: it measures
-  relative to the stand.
-- Example profile: `config/test_profiles/example_low_freq.toml` (20–200 Hz, 0.42 g rms).
 
 ## Installation
 
@@ -107,13 +115,14 @@ IEPE conditioner above. Use `--settings config/settings_laser.toml`:
 ## Usage
 
 ```
-vcactl check   --shaker tv51110 --profile config/test_profiles/example_flat.toml [--level -6]
-vcactl pretest --shaker tv51110 --profile config/test_profiles/example_flat.toml
-vcactl run     --shaker tv51110 --profile config/test_profiles/example_flat.toml [--level 0] [--duration 60]
+vcactl check   --shaker bk4809 --profile config/test_profiles/example_low_g.toml [--level -6]
+vcactl pretest --shaker bk4809 --profile config/test_profiles/example_low_g.toml
+vcactl run     --shaker bk4809 --profile config/test_profiles/example_low_g.toml [--level 0] [--duration 60]
 ```
 
 - `--shaker` takes `tv51110`, `tv52110`, `bk4809`, `bk4801_4812`, or a path to a shaker TOML file.
 - `--daq` takes `usb6211` (default), `usb4431`, `pxie4468`, or a path to a DAQ TOML file.
+- `--sensor` takes `pcb356b18` (default) or a path to a sensor TOML file.
 - `--sim` uses the simulated shaker instead of the DAQ. `--sim-realtime` paces it in real time.
 - `--settings` points to a different settings file (default `config/settings.toml`; `--station` still works). `--log-dir` sets the log root (default `runs/`).
 - Ctrl-C (or SIGTERM) ramps the drive down smoothly. A second Ctrl-C stops immediately and
@@ -214,9 +223,8 @@ ringdown_s = 2.0           # 0 = off
 breakpoints = [{ f_hz = 120.0, accel_g = 0.5 }]
 ```
 
-Examples: `example_sine_sweep.toml`, `example_stepped_sine.toml`, `example_ringdown.toml`
-and `example_stepped_sine_low_freq.toml` (for the laser sensor settings). `--level` shifts
-every level; `--duration` is ignored for sine profiles.
+Examples: `example_sine_sweep.toml`, `example_stepped_sine.toml` and `example_ringdown.toml`.
+`--level` shifts every level; `--duration` is ignored for sine profiles.
 
 ## How it works
 
@@ -241,16 +249,18 @@ every level; `--duration` is ignored for sine profiles.
   4. level ramp from −12 dB in 3 dB steps, each held until the rms error is ≤ 1 dB, then the
      test duration at full level;
   5. ramp-down to 0 V.
-- **Pre-flight (before any output):** payload (`safety.payload_kg`) against the shaker's static
-  payload limit, rms acceleration, force (moving mass + payload), 3σ velocity and 3σ peak-peak
-  displacement against the shaker's data-sheet limits, plus the frequency range. The force check
-  is the dynamic payload limit; each shaker file lists it for a few acceleration levels.
+- **Pre-flight (before any output):** payload (`safety.payload_kg` + sensor mass) against the
+  shaker's static payload limit, rms acceleration, force (moving mass + payload), 3σ velocity
+  and 3σ peak-peak displacement against the shaker's data-sheet limits, plus the frequency
+  range. The force check is the dynamic payload limit; each shaker file lists it for a few
+  acceleration levels. Also checked: the acceleration peak (4.5 × rms for random profiles)
+  against the sensor range, and the band against the sensor's frequency range.
 - **Runtime aborts:**
   - AI overload;
+  - sensor over range (measured peak above the sensor file's `range_g_pk`);
   - drive rms or clipping over the limit;
   - response over the shaker's random rating;
   - open loop (sensor or amplifier lost);
-  - displacement sensor out of its range window (laser sensor only);
   - rms error or too many lines outside the abort band;
   - any DAQmx error or warning (e.g. underflow, potential glitch).
 
@@ -275,7 +285,7 @@ every level; `--duration` is ignored for sine profiles.
   `abort_db` for 3 half-frames (sweep and dwell), a step that does not settle within
   `max_settle_s`, a drive amplitude over `max_drive_v`, plus the random I/O aborts.
 - **Ring-down:** after the dwell the sine is cut at a zero crossing and the drive stays at
-  0 V for `ringdown_s`. The control signal (g, or mm with the laser sensor) is written from
+  0 V for `ringdown_s`. The control signal (g) is written from
   0.1 s before the cut, with t = 0 at the cut. `events.csv` records the cut as stream time
   (sample-exact) and wall-clock time (stream start + stream time, accurate to about the USB
   latency, tens of ms). Use it to find the decay in an external recording (Q2); precise
@@ -298,7 +308,9 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
 | `usb4431` | 10 | 3.5 | 51.2 k, 80 k, 96 k ÷ 2ⁿ | IEPE 2.1 mA; shaker `max_drive_v` ≤ 3.5 |
 | `pxie4468` | 0.316 … 42.4 | 0.316, 1, 3.16, 10 | 100 S/s – 200 kS/s | IEPE 4/10/20 mA; `filter_delay_samples` depends on the rate |
 
-The shaker's `max_drive_v` must not exceed `daq.ao_range_v`. IEPE excitation requires AC coupling.
+The shaker's `max_drive_v` must not exceed `daq.ao_range_v`. IEPE excitation requires AC coupling,
+and its current must lie within the sensor's IEPE range. `conditioner_gain` (default 1) is the
+gain of an external IEPE conditioner between the sensor and AI (USB-6211).
 
 ## Tuning notes (`config/settings.toml`)
 
@@ -320,8 +332,9 @@ The shaker's `max_drive_v` must not exceed `daq.ao_range_v`. IEPE excitation req
 ## Development
 
 ```
-.venv/bin/pytest            # all tests use the simulated shaker
-vcactl run --sim --shaker tv52110 --profile config/test_profiles/example_wideband.toml --duration 30
+.venv/bin/pytest            # all tests use the simulated shaker and, mostly, the wide-range
+                            # test sensor tests/data/sensor_test.toml
+vcactl run --sim --shaker bk4809 --profile config/test_profiles/example_low_g.toml --duration 30
 ```
 
 Layout:

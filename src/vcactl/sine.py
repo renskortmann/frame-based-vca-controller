@@ -84,14 +84,12 @@ class SineController(ControllerBase):
     # ------------------------------------------------------------------ setup hooks
     def _pretest_band(self) -> tuple[float, float]:
         """Test band widened by 1/3 octave and 3 lines each side, inside what the shaker,
-        the control rate and the sensor allow."""
+        and the control rate allow."""
         p = self.profile
         lo = min(p.f_lo * 2 ** (-1 / 3), p.f_lo - 3 * self.df)
         hi = max(p.f_hi * 2 ** (1 / 3), p.f_hi + 3 * self.df)
         lo = max(lo, 2 * self.df, self.shaker.f_min_hz)
         hi = min(hi, 0.3 * self.fs, self.shaker.f_max_hz)
-        if self.settings.sensor.type == "displacement":
-            hi = min(hi, self.settings.sensor.f_max_hz)
         return lo, max(hi, p.f_hi)
 
     def _check_predicted_drive(self) -> None:
@@ -188,9 +186,6 @@ class SineController(ControllerBase):
         meas = 2 * abs(Y) / self.wsum
         phase = math.degrees(np.angle(1j * Y))         # y = A sin(phi + theta)
         f = float(np.sum(w * self.f_hist.get(a, b)) / self.wsum)
-        if self.displacement:                          # mm -> g; a = -(2 pi f)^2 x
-            meas *= (2 * np.pi * f) ** 2 * 1e-3 / G
-            phase += 180.0
         ref_f = float(np.sum(w * ref) / self.wsum)
         drive = float(np.sum(w * self.amp_hist.get(a, b)) / self.wsum)
         err = 20 * math.log10(ref_f / meas) if meas > 0 else math.inf
@@ -212,7 +207,6 @@ class SineController(ControllerBase):
         sd, cut_index = self._generate(f1, ref1, amp1, cut)
         est = self.est = self._estimate()
         self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
-        self.monitor.check_sensor_range(sd.disp_min_mm, sd.disp_max_mm)
         if est is not None:
             self.monitor.check_response_peak(est.meas_pk_g)
             self.monitor.check_open_loop(est.meas_pk_g, est.ref_pk_g)
@@ -236,7 +230,6 @@ class SineController(ControllerBase):
         self._check_stop()
         sd = self._io(np.zeros(self.half))
         self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
-        self.monitor.check_sensor_range(sd.disp_min_mm, sd.disp_max_mm)
         self.run_time_s += self.half / self.fs
         self._report(sd, None)
         return sd
@@ -390,10 +383,7 @@ class SineController(ControllerBase):
         a = cut + self.delay - pre - start_guess
         data = buf[a:a + pre + n_ring]
         t = (np.arange(len(data)) - pre) / self.fs
-        if self.displacement:
-            cols = {"t_s": t, "response_mm": data + self.sensor.offset_mm}
-        else:
-            cols = {"t_s": t, "response_g": data}
+        cols = {"t_s": t, "response_g": data}
         if self.logger:
             self.logger.timeseries(f"ringdown_{self.step_label}", cols)
         self.last_ringdown = cols

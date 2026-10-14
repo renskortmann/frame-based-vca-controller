@@ -123,16 +123,6 @@ def test_ringdown(settings, tv51110, tmp_path):
     assert_safe_stop(tv51110, backend)
 
 
-def test_displacement_sensor_stepped_sine(laser_settings, tv51110):
-    prof = load_profile(PROFILES / "example_stepped_sine_low_freq.toml")
-    prof = dataclasses.replace(prof, frequencies_hz=prof.frequencies_hz[::5], dwell_s=2.0)
-    ctl, backend, res = run(laser_settings, tv51110, prof)
-    assert res.completed, res.reason
-    for row in ctl.steps:
-        assert abs(row["err_db"]) <= prof.tolerance.alarm_db
-    assert_safe_stop(tv51110, backend)
-
-
 def test_open_loop_aborts(settings, tv51110, tmp_path):
     _, backend, res = run(settings, tv51110, write_profile(tmp_path, SWEEP),
                           sim_kwargs={"disconnect_after_s": 15.0})
