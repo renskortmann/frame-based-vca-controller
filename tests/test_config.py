@@ -221,3 +221,15 @@ def test_sensor_validation(settings, field, value):
                                                                    **{field: value}))
     with pytest.raises(ConfigError, match="sensor"):
         validate_settings(bad)
+
+
+def test_settings_key(tmp_path):
+    assert load_settings("default") == load_settings()
+    (tmp_path / "settings").mkdir()
+    (tmp_path / "settings" / "default.toml").write_text("[pretest]\ndrive_rms_v = 0.02\n")
+    for kind in ("daq", "sensors"):
+        (tmp_path / kind).mkdir()
+    (tmp_path / "daq" / "usb6211.toml").write_text(open("config/daq/usb6211.toml").read())
+    (tmp_path / "sensors" / "pcb356b18.toml").write_text(
+        open("config/sensors/pcb356b18.toml").read())
+    assert load_settings(config_dir=tmp_path).pretest.drive_rms_v == 0.02

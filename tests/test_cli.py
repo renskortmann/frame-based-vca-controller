@@ -4,15 +4,15 @@ from conftest import PROFILES, TEST_SENSOR
 
 def test_check_pass_and_fail(capsys):
     assert main(["check", "--sensor", TEST_SENSOR, "--shaker", "tv51110", "--profile",
-                 str(PROFILES / "example_flat.toml")]) == 0
+                 str(PROFILES / "flat.toml")]) == 0
     assert main(["check", "--sensor", TEST_SENSOR, "--shaker", "tv52110", "--profile",
-                 str(PROFILES / "example_wideband.toml"), "--level", "13"]) == 2
+                 str(PROFILES / "wideband.toml"), "--level", "13"]) == 2
     assert "FAIL" in capsys.readouterr().out
 
 
 def test_run_sim(tmp_path, capsys):
     rc = main(["run", "--sensor", TEST_SENSOR, "--sim", "--shaker", "tv52110", "--profile",
-               str(PROFILES / "example_sloped.toml"), "--duration", "3",
+               str(PROFILES / "sloped.toml"), "--duration", "3",
                "--log-dir", str(tmp_path), "--seed", "1"])
     out = capsys.readouterr().out
     assert rc == 0, out
@@ -21,18 +21,18 @@ def test_run_sim(tmp_path, capsys):
 
 
 def test_config_error_exit_code(capsys):
-    assert main(["check", "--sensor", TEST_SENSOR, "--shaker", "nope", "--profile", str(PROFILES / "example_flat.toml")]) == 2
+    assert main(["check", "--sensor", TEST_SENSOR, "--shaker", "nope", "--profile", str(PROFILES / "flat.toml")]) == 2
     assert "configuration error" in capsys.readouterr().err
 
 
 def test_check_with_daq(capsys):
     assert main(["check", "--sensor", TEST_SENSOR, "--daq", "pxie4468", "--shaker", "tv51110", "--profile",
-                 str(PROFILES / "example_flat.toml")]) == 0
+                 str(PROFILES / "flat.toml")]) == 0
     assert "NI PXIe-4468" in capsys.readouterr().out
 
 
 def test_check_sine_profiles(capsys):
-    for name in ("example_sine_sweep", "example_stepped_sine", "example_ringdown"):
+    for name in ("sine_sweep", "stepped_sine", "ringdown"):
         assert main(["check", "--sensor", TEST_SENSOR, "--shaker", "tv51110", "--profile",
                      str(PROFILES / f"{name}.toml")]) == 0
     out = capsys.readouterr().out
@@ -41,7 +41,7 @@ def test_check_sine_profiles(capsys):
 
 def test_run_sim_ringdown(tmp_path, capsys):
     rc = main(["run", "--sensor", TEST_SENSOR, "--sim", "--shaker", "tv51110", "--profile",
-               str(PROFILES / "example_ringdown.toml"), "--level", "-6",
+               str(PROFILES / "ringdown.toml"), "--level", "-6",
                "--log-dir", str(tmp_path), "--seed", "1"])
     out = capsys.readouterr().out
     assert rc == 0, out
@@ -51,3 +51,14 @@ def test_run_sim_ringdown(tmp_path, capsys):
     assert {"steps.csv", "events.csv", "ringdown_L3F1.csv", "status.csv"} <= files
     header = (run_dir / "status.csv").read_text().splitlines()[0]
     assert "meas_pk_g" in header
+
+
+def test_profile_and_settings_keys(capsys):
+    assert main(["check", "--sensor", TEST_SENSOR, "--shaker", "tv51110", "--profile", "flat",
+                 "--settings", "default"]) == 0
+    assert "Flat 20-2000 Hz" in capsys.readouterr().out
+
+
+def test_unknown_profile_key(capsys):
+    assert main(["check", "--shaker", "bk4809", "--profile", "nope"]) == 2
+    assert "nope.toml" in capsys.readouterr().err

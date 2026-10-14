@@ -11,7 +11,7 @@ This file only records what is not obvious from the code or README.
 - NI-DAQmx does not work under WSL2. In WSL2 always use `--sim`; real hardware needs native
   Windows or Linux.
 - Check a profile without hardware:
-  `vcactl check --shaker bk4809 --daq usb6211 --profile config/test_profiles/example_flat.toml`
+  `vcactl check --shaker bk4809 --daq usb6211 --profile low_g`
 - Work directly in the checked-out branch; no feature branch or PR is required.
 - Don't commit or push. The user reviews and commits all changes themselves.
 - Datasheets and manuals are not in the repo (the old `docs/` folder is gone); they are in the
@@ -23,7 +23,7 @@ This file only records what is not obvious from the code or README.
 
 ## Shaker, DAQ, sensor + settings configs
 
-Four files combine into one run, each selected separately:
+Four files and a test profile combine into one run, each selected separately:
 
 - Shaker (`--shaker`, `config/shakers/*.toml`): the exciter, its amplifier gain and the drive
   limits at the amplifier input (`max_drive_v`, `max_drive_rms_v`).
@@ -35,9 +35,14 @@ Four files combine into one run, each selected separately:
 - Sensor (`--sensor`, `config/sensors/*.toml`, default `pcb356b18`): the control accelerometer's
   calibrated sensitivity, range, frequency range, mass and IEPE current range. Settings files
   may not have a `[sensor]` table (the loader rejects it).
-- Settings (`--settings`, default `config/settings.toml`; `--station` is an old alias): control
-  tuning, pretest and the shaker-independent safety settings (payload, clipping, open-loop and
-  overload aborts).
+- Settings (`--settings`, default key `default` = `config/settings/default.toml`; `--station` is
+  an old alias): control tuning, pretest and the shaker-independent safety settings (payload,
+  clipping, open-loop and overload aborts).
+- Test profile (`--profile`, `config/test_profiles/*.toml`, e.g. `low_g`).
+
+Every option takes a key (`<config-dir>/<kind>/<key>.toml`, via `resolve_config_path`) or a path.
+`--shaker` and `--profile` are required on purpose: no silent default for the amplifier-dependent
+drive limits or for the test itself.
 
 Anything that depends on the amplifier belongs in the shaker file, so that no settings/shaker
 combination can be wrong. `validate_setup` (called by the CLI and the `Controller`) checks the
@@ -57,7 +62,7 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
 - Intended for low-frequency, low-g tests: +/-5 g, 0.5-3000 Hz (+/-5 %). The shared
   `pretest.drive_rms_v` was lowered from 0.05 to 0.01 V for it: at 0.05 V the simulated pretest
   peaks above 5 g on the BK 4809 and BK 4801/4812. The higher-level example profiles
-  (`example_flat`, `example_sloped`, `example_wideband`) fail its range check; they wait for the
+  (`flat`, `sloped`, `wideband`) fail its range check; they wait for the
   second, less sensitive and wider-band accelerometer, which gets its own sensor file and probably
   becomes the default.
 - Tests mostly use `tests/data/sensor_test.toml` (10 mV/g, +/-500 g, 1-10000 Hz) so that they are

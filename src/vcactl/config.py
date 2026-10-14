@@ -271,13 +271,13 @@ def load_shaker(name_or_path: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> Sha
 
 def load_settings(path: Path | str | None = None, daq: str = "usb6211",
                  config_dir: Path = DEFAULT_CONFIG_DIR, sensor: str = "pcb356b18") -> Settings:
-    """Load a settings file and combine it with the DAQ device profile ``daq`` and the
-    sensor file ``sensor``.
+    """Load a settings file (key or path, default ``default``: ``settings/default.toml``) and
+    combine it with the DAQ device profile ``daq`` and the sensor file ``sensor``.
 
     The settings file may have a ``[daq]`` table that overrides settings of the DAQ profile
     (for example ``device`` or ``ai_channel``), but not its ``[limits]``.
     """
-    path = Path(path) if path else DEFAULT_CONFIG_DIR / "settings.toml"
+    path = resolve_config_path(str(path) if path else "default", "settings", config_dir)
     daq_path = resolve_config_path(daq, "daq", config_dir)
     sensor_path = resolve_config_path(sensor, "sensors", config_dir)
     table = read_toml(path)

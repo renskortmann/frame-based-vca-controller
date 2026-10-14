@@ -6,8 +6,8 @@ from conftest import PROFILES
 
 
 def test_bundled_profiles_pass(settings, shaker):
-    for name in ("example_flat", "example_sloped", "example_wideband", "example_sine_sweep",
-                 "example_stepped_sine", "example_ringdown"):
+    for name in ("flat", "sloped", "wideband", "sine_sweep",
+                 "stepped_sine", "ringdown"):
         assert preflight(load_profile(PROFILES / f"{name}.toml"), shaker, settings).ok
 
 

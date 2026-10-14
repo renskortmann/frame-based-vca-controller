@@ -13,7 +13,7 @@ def test_flat_rms(flat_profile):
 
 
 def test_slopes_resolved():
-    p = load_profile(PROFILES / "example_sloped.toml")
+    p = load_profile(PROFILES / "sloped.toml")
     # +6 dB/oct over two octaves = +12 dB
     assert p.psd_g2_hz[1] == pytest.approx(0.002 * 10 ** 1.2)
     assert p.psd_g2_hz[2] == pytest.approx(p.psd_g2_hz[1])
@@ -24,7 +24,7 @@ def test_slopes_resolved():
 
 
 def test_exact_integrals_match_numeric():
-    p = load_profile(PROFILES / "example_sloped.toml")
+    p = load_profile(PROFILES / "sloped.toml")
     f = np.geomspace(p.f_lo, p.f_hi, 200001)
     s = p.psd(f)
     assert p.accel_rms_g() == pytest.approx(math.sqrt(np.trapezoid(s, f)), rel=1e-5)
@@ -53,12 +53,12 @@ def test_invalid_profiles(tmp_path, body, match):
 # ---------------------------------------------------------------------------- sine profiles
 
 def test_sine_profiles_load():
-    sweep = load_profile(PROFILES / "example_sine_sweep.toml")
+    sweep = load_profile(PROFILES / "sine_sweep.toml")
     assert sweep.kind == "sine_sweep" and (sweep.f_lo, sweep.f_hi) == (20.0, 2000.0)
     assert sweep.sweep_duration_s() == pytest.approx(math.log2(100) * 60)
-    stepped = load_profile(PROFILES / "example_stepped_sine.toml")
+    stepped = load_profile(PROFILES / "stepped_sine.toml")
     assert stepped.kind == "stepped_sine" and stepped.levels_db == (-12.0, -6.0, 0.0)
-    ring = load_profile(PROFILES / "example_ringdown.toml")
+    ring = load_profile(PROFILES / "ringdown.toml")
     assert ring.frequencies_hz == (120.0,) and ring.ringdown_s == 2.0
     assert ring.tolerance.alarm_db == 1.0 and ring.tolerance.abort_db == 3.0
 

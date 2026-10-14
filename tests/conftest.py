@@ -27,9 +27,9 @@ def tv51110():
 
 @pytest.fixture
 def flat_profile():
-    return load_profile(PROFILES / "example_flat.toml")
+    return load_profile(PROFILES / "flat.toml")
 
 
 @pytest.fixture
 def wideband_profile():
-    return load_profile(PROFILES / "example_wideband.toml")
+    return load_profile(PROFILES / "wideband.toml")

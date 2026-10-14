@@ -50,16 +50,21 @@ Contents:
 
 ### Overview
 
-A run combines four configuration files and a test profile, each selected on the command line
-by a key or by a path to a TOML file:
+A run combines four configuration files and a test profile. Each option takes a key, which
+selects `<config-dir>/<directory>/<key>.toml`, or a path to a TOML file anywhere (for example a
+specimen-specific profile):
 
-| Option | Files | Default | Keys |
+| Option | Directory | Default | Keys |
 |---|---|---|---|
-| `--shaker` | `config/shakers/*.toml` | (required) | `tv51110`, `tv52110`, `bk4809`, `bk4801_4812` |
-| `--daq` | `config/daq/*.toml` | `usb6211` | `usb6211`, `usb4431`, `pxie4468` |
-| `--sensor` | `config/sensors/*.toml` | `pcb356b18` | `pcb356b18` |
-| `--settings` | `config/settings.toml` | `config/settings.toml` | (path) |
-| `--profile` | `config/test_profiles/*.toml` | (required) | (path) |
+| `--shaker` | `config/shakers/` | required | `tv51110`, `tv52110`, `bk4809`, `bk4801_4812` |
+| `--daq` | `config/daq/` | `usb6211` | `usb6211`, `usb4431`, `pxie4468` |
+| `--sensor` | `config/sensors/` | `pcb356b18` | `pcb356b18` |
+| `--settings` | `config/settings/` | `default` | `default` |
+| `--profile` | `config/test_profiles/` | required | `low_g`, `flat`, `sloped`, `wideband`, `sine_sweep`, `stepped_sine`, `ringdown` |
+
+`--shaker` and `--profile` have no default on purpose: the shaker file sets the
+amplifier-dependent drive limits, and the profile is the test itself, so neither should be
+chosen silently.
 
 All files are validated when they are loaded, including the rules that involve more than one
 file (for example the shaker's drive limit against the DAQ's AO range).
@@ -68,7 +73,7 @@ Cross-file rules:
 
 - `--daq` selects a DAQ profile; `[daq]` in `--settings` may override DAQ settings (for example
   `device`), but not `model` or `[limits]`.
-- The control sensor is selected only with `--sensor`; `[sensor]` in `settings.toml` is rejected.
+- The control sensor is selected only with `--sensor`; `[sensor]` in the settings file is rejected.
 - `shaker.max_drive_v` must be within `daq.ao_range_v`.
 - `pretest.drive_rms_v` must be within `shaker.max_drive_rms_v`.
 - If IEPE is enabled (`daq.iepe_current_ma > 0`), `ai_coupling` must be AC and the current must
@@ -162,12 +167,12 @@ calibrations. Notes:
   USB-6211.
 - Wait at least 12 s after switching on the IEPE excitation before starting a pretest; the
   output needs that long to settle.
-- 1 V/g leaves little room: a 0.55 g rms random test (`example_low_g.toml`) already peaks near
+- 1 V/g leaves little room: a 0.55 g rms random test (`low_g.toml`) already peaks near
   2.5 g. The default `pretest.drive_rms_v` (0.01 V) keeps the pretest within ±5 g on every
   shaker; at 0.05 V the BK shakers exceed it.
 
 A less sensitive, wider-band accelerometer will get its own file later for the higher-level
-example profiles (`example_flat`, `example_sloped`, `example_wideband`), which fail the
+example profiles (`flat`, `sloped`, `wideband`), which fail the
 356B18's range check.
 
 ### Wiring and power-up
@@ -200,7 +205,8 @@ Power sequence, which matters because the USB-6211 AO glitches by about ±1 V fo
 
 ### Settings (`--settings`)
 
-`config/settings.toml` holds the settings that do not depend on the hardware files: control
+`config/settings/default.toml` (key `default`) holds the settings that do not depend on the
+hardware files: control
 tuning (`[control]`, `[sine]`), safety (`[safety]`: payload, clipping, open-loop and overload
 aborts) and the pretest (`[pretest]`). The sensor is not in it; it comes from `--sensor`.
 Tuning notes:
@@ -212,7 +218,8 @@ Tuning notes:
 
 ### Test profiles (`--profile`)
 
-Test profiles are in `config/test_profiles/*.toml`. `type` selects the test: random (the
+Test profiles are in `config/test_profiles/*.toml`; the file name is the key
+(`--profile low_g`). `type` selects the test: random (the
 default, no `type` needed), `type = "sine_sweep"` or `type = "stepped_sine"`. The `[tolerance]`
 table is optional. `--level` shifts the whole profile by that many dB.
 
@@ -238,8 +245,8 @@ max_abort_lines_pct = 5.0
 The PSD is interpolated log-log between breakpoints and is zero outside the first and last
 breakpoint.
 
-Examples: `example_low_g.toml` (0.55 g rms, 20–3000 Hz; fits the PCB 356B18), and
-`example_flat.toml`, `example_sloped.toml` and `example_wideband.toml` (higher levels, for a
+Examples: `low_g.toml` (0.55 g rms, 20–3000 Hz; fits the PCB 356B18), and
+`flat.toml`, `sloped.toml` and `wideband.toml` (higher levels, for a
 less sensitive sensor).
 
 #### Sine sweep
@@ -262,7 +269,7 @@ alarm_db = 1.0
 abort_db = 3.0
 ```
 
-Example: `example_sine_sweep.toml`. `--duration` is ignored for sine profiles.
+Example: `sine_sweep.toml`. `--duration` is ignored for sine profiles.
 
 #### Stepped sine and ring-down
 
@@ -282,7 +289,7 @@ ringdown_s = 2.0           # 0 = off
 breakpoints = [{ f_hz = 120.0, accel_g = 0.5 }]
 ```
 
-Examples: `example_stepped_sine.toml` and `example_ringdown.toml`. `--level` shifts every level;
+Examples: `stepped_sine.toml` and `ringdown.toml`. `--level` shifts every level;
 `--duration` is ignored.
 
 ## Usage
@@ -298,8 +305,8 @@ Options of `check`, `pretest` and `run`
 (see [Configuration](#configuration) for the keys):
 
 - Required: `--shaker`, `--profile`.
-- Defaults: `--daq usb6211`, `--sensor pcb356b18`, `--settings config/settings.toml`
-  (alias: `--station`), `--config-dir config/`.
+- Defaults: `--daq usb6211`, `--sensor pcb356b18`, `--settings default` (alias: `--station`),
+  `--config-dir config/`. All five take a key or a path.
 - `--level` shifts the profile level in dB (default 0).
 
 Only for `pretest` and `run`:
@@ -313,18 +320,18 @@ Only for `run`: `--duration` sets the test duration at full level in s (random p
 from the profile).
 
 ```
-vcactl check   --shaker bk4809 --profile config/test_profiles/example_low_g.toml [--level -6]
-vcactl pretest --shaker bk4809 --profile config/test_profiles/example_low_g.toml
-vcactl run     --shaker bk4809 --profile config/test_profiles/example_low_g.toml [--level 0] [--duration 60]
+vcactl check   --shaker bk4809 --profile low_g [--level -6]
+vcactl pretest --shaker bk4809 --profile low_g
+vcactl run     --shaker bk4809 --profile low_g [--level 0] [--duration 60]
 ```
 
 Without hardware, try the setup and the profile on the simulated shaker first. `check` never
 drives the DAQ, so it needs no `--sim`:
 
 ```
-vcactl check         --shaker bk4809 --profile config/test_profiles/example_low_g.toml
-vcactl pretest --sim --shaker bk4809 --profile config/test_profiles/example_low_g.toml
-vcactl run     --sim --shaker bk4809 --profile config/test_profiles/example_low_g.toml --duration 10
+vcactl check         --shaker bk4809 --profile low_g
+vcactl pretest --sim --shaker bk4809 --profile low_g
+vcactl run     --sim --shaker bk4809 --profile low_g --duration 10
 ```
 
 Ctrl-C (or SIGTERM) ramps the drive down smoothly. A second Ctrl-C stops immediately and forces
@@ -377,7 +384,7 @@ Recommended first test on hardware:
   - The driver works, but sees no device: check the USB/PXI connection and that the device
     appears in NI MAX, then rerun `vcactl list-devices`.
 - Pre-flight `FAIL` on profile checks:
-  - Start with `config/test_profiles/example_low_g.toml` and `--level -12`.
+  - Start with `--profile low_g` and `--level -12`.
   - Re-check the frequency band (shaker, sensor, control rate), the sensor range and the
     shaker's force and displacement limits.
 - Runtime aborts (`AI overload`, `sensor over range`, `drive clipping`, `open loop`):
@@ -479,7 +486,7 @@ it, because that would overwrite the edits.
 ```
 .venv/bin/pytest            # all tests use the simulated shaker and, mostly, the wide-range
                             # test sensor tests/data/sensor_test.toml
-vcactl run --sim --shaker bk4809 --profile config/test_profiles/example_low_g.toml --duration 30
+vcactl run --sim --shaker bk4809 --profile low_g --duration 30
 ```
 
 Layout:

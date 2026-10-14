@@ -163,7 +163,7 @@ def test_low_g_run_with_pcb356b18():
     """Default sensor (PCB 356B18, +/-5 g) on the BK 4809: the pretest and run stay in range."""
     settings = load_settings()
     shaker = load_shaker("bk4809")
-    profile = load_profile(PROFILES / "example_low_g.toml")
+    profile = load_profile(PROFILES / "low_g.toml")
     ctl, backend, res = run(settings, shaker, profile)
     assert res.completed and res.state == State.DONE, res.reason
     assert abs(res.rms_err_db) < 0.5

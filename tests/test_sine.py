@@ -65,7 +65,7 @@ def test_sweep_on_nonlinear_shaker(settings, tv51110, tmp_path):
 
 
 def test_stepped_sine_steps_within_tolerance(settings, tv51110, tmp_path):
-    prof = load_profile(PROFILES / "example_stepped_sine.toml")
+    prof = load_profile(PROFILES / "stepped_sine.toml")
     prof = dataclasses.replace(prof, frequencies_hz=prof.frequencies_hz[::4], settle_s=0.5,
                                dwell_s=1.0)
     logger = RunLogger(tmp_path, "stepped", SINE_STATUS_FIELDS)
