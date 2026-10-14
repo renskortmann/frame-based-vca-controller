@@ -284,10 +284,10 @@ notes(s, "The decision we need from you comes after step 2: your requirements de
 s = new_slide()
 title(s, "What we already have", "Our starting point: two shakers, a DAQ device and our own controller software")
 cards = [
-    ("B&K 4809 vibration exciter", "Small exciter: 44.5 N, 10 Hz to 20 kHz. We have no amplifier "
-     "for it; a B&K 2718 power amplifier would have to be bought.", "Needs amplifier", ORANGE),
+    ("B&K 4809 vibration exciter", "Small exciter: 44.5 N, 20 Hz to 20 kHz. Runs on the lab's "
+     "Palladium P-2000 audio amplifier, which has no current limit.", "Ready to use", TEAL),
     ("B&K 4801/4812 with 2707 amplifier", "Complete system with blower: 445 N, 5 Hz to 10 kHz. "
-     "Needs three-phase mains (380 V) at the test location.", "Ready to use", TEAL),
+     "Runs on 230 V single-phase mains.", "Ready to use", TEAL),
     ("NI USB-6211 DAQ device", "Generates the drive signal and reads the accelerometer. It "
      "cannot power an IEPE accelerometer: that needs a small signal conditioner.",
      "Needs IEPE conditioner", ORANGE),
@@ -324,7 +324,7 @@ def fmt_f(f):
 
 
 rows = [["", "B&K 4809", "B&K 4801/4812", "TIRA TV 51110", "TIRA TV 52110"],
-        ["Availability", "Owned, no amplifier", "Owned, complete", "To buy", "To buy"],
+        ["Availability", "Owned, P-2000 amplifier", "Owned, complete", "To buy", "To buy"],
         ["Frequency range", *[f"{fmt_f(d[k]['f_min'])} – {fmt_f(d[k]['f_max'])}" for k in order]],
         ["Force, sine peak", *[f"{d[k]['fs']:g} N" for k in order]],
         ["Force, random rms", *[f"{d[k]['fr']:g} N" + (" *" if k.startswith("bk") else "")
@@ -334,7 +334,7 @@ rows = [["", "B&K 4809", "B&K 4801/4812", "TIRA TV 51110", "TIRA TV 52110"],
         ["Velocity, peak", *[f"{d[k]['v']:g} m/s" for k in order]],
         ["Moving mass", *[f"{d[k]['m'] * 1000:g} g" for k in order]],
         ["Static payload limit, vertical", *[f"{d[k]['stat']:g} kg" for k in order]],
-        ["Still to buy", "B&K 2718 amplifier", "Nothing (3-phase mains)", "Complete system",
+        ["Still to buy", "Nothing", "Nothing", "Complete system",
          "Complete system"]]
 cols = [3.35, 2.25, 2.25, 2.14, 2.14]
 table(s, MX, 1.85, sum(cols), rows, cols, row_h=0.4, size=13, name="shaker table",
@@ -423,9 +423,9 @@ s = new_slide()
 title(s, "Which shaker suits which test")
 cols4 = [
     ("B&K 4809", TEAL, "Small, light specimens; high frequencies up to 20 kHz",
-     "Low force (31.5 N rms random); 8 mm stroke", "B&K 2718 amplifier (quote needed)"),
+     "Low force (31.5 N rms random); 8 mm stroke", "None"),
     ("B&K 4801/4812", ORANGE, "Heavier specimens up to about 10 kg; high test levels",
-     "80 kg exciter, three-phase mains, blower noise; older equipment", "None"),
+     "80 kg exciter, blower noise; older equipment", "None"),
     ("TIRA TV 51110", NAVY, "Compact complete system; more random force than the TV 52110",
      "Up to 7 kHz; payloads of a few kg at most", "Complete system (quote needed)"),
     ("TIRA TV 52110", RGBColor(0x5A, 0x66, 0x74), "More stroke (15 mm) and a stiffer suspension",
@@ -460,7 +460,7 @@ qs = [("Payload", "Total mass of specimen and fixture? Size and mounting points?
       ("Control points", "One control accelerometer, or several (averaging, limiting)?"),
       ("Duration and volume", "Test length, number of specimens, how often?"),
       ("Documentation", "Test reports, traceable calibration, accreditation (ISO/IEC 17025)?"),
-      ("Site, timeline, budget", "Mains (three-phase?), space, noise; when, and what budget?")]
+      ("Site, timeline, budget", "Mains, space, noise; when, and what budget?")]
 cw = (W - 2 * MX - 0.4) / 2
 for i, (head, q) in enumerate(qs):
     col, row = i // 5, i % 5
@@ -519,7 +519,7 @@ ytop, ybot = 2.25, 4.55
 xs = [MX, MX + 3.15, MX + 6.3, MX + 9.45]
 top = [("PC with controller software", NAVY, "Windows or Linux"),
        ("NI USB-6211 DAQ", NAVY, "owned"),
-       ("Power amplifier", NAVY, "B&K 2707 (owned) or 2718"),
+       ("Power amplifier", NAVY, "B&K 2707 or P-2000"),
        ("Shaker", ORANGE, "plus fixture, specimen")]
 for i, (head, col, sub) in enumerate(top):
     b = box(s, xs[i], ytop, bw, bh, fill=col, name=f"block {head}")
@@ -560,8 +560,9 @@ text(s, MX, 5.95, W - 2 * MX, 0.75,
         "24-bit resolution and anti-aliasing filters. Our software already supports it.", {})]],
      size=14, name="upgrade note")
 footer(s, n)
-notes(s, "The amplifier's own protections (current and displacement trips on the 2707, current "
-         "limit on the 2718) stay active as a second safety layer next to the software limits.")
+notes(s, "The amplifier's own protections (current and displacement trips on the 2707; "
+         "temperature, DC and short-circuit protection on the P-2000, which has no current "
+         "limit) stay active as a second safety layer next to the software limits.")
 
 # 10. Own controller: software ------------------------------------------------------
 s = new_slide()
@@ -693,8 +694,8 @@ for i, (lab, desc, val, col) in enumerate(stats):
 text(s, MX, 4.3, W - 2 * MX, 0.4, "Shaker-dependent costs, on top of either route",
      size=16, bold=True, color=NAVY, name="shaker costs head")
 rows = [["Shaker", "Extra cost"],
-        ["B&K 4801/4812 with 2707", "None; needs three-phase mains at the test location"],
-        ["B&K 4809", "B&K 2718 power amplifier (quote needed)"],
+        ["B&K 4801/4812 with 2707", "None; runs on 230 V single-phase mains"],
+        ["B&K 4809", "None; Palladium P-2000 amplifier owned"],
         ["TIRA TV 51110 or TV 52110", "Complete system (quote needed)"],
         ["Any shaker", "Fixture for your specimen (designed once requirements are known)"]]
 cols = [4.0, 8.13]
@@ -707,8 +708,8 @@ text(s, MX, 0.55, W - 2 * MX, 0.8, "Next steps", size=36, font=HEAD_FONT, bold=T
      color=WHITE, name="title")
 steps = [("1", "You", "Answer the questions on slide 7: payload, frequency range, levels, "
           "stroke, test types and documentation needs."),
-         ("2", "We", "Select the shaker, request quotes (VR9700, accelerometer, amplifier or "
-          "TIRA system) and firm up the estimates."),
+         ("2", "We", "Select the shaker, request quotes (VR9700, accelerometer or TIRA "
+          "system) and firm up the estimates."),
          ("3", "Together", "Decide on the controller route; for route B, agree on a commissioning "
           "and validation plan.")]
 for i, (num, who, what) in enumerate(steps):

@@ -1,5 +1,6 @@
 # NI USB-4431 dynamic signal acquisition device (24-bit delta-sigma AI and AO, 4 AI, 1 AO).
-# Values from docs/NI-USB-443x-specifications.pdf.
+# Values from Controller + DAQ/NI-USB-443x-specifications.pdf
+# in the Nextcloud project folder.
 # Select with --daq usb4431.
 #
 # The accelerometer can be connected directly: IEPE excitation (2.1 mA) on AI0..AI3.

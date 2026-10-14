@@ -1,7 +1,8 @@
 # Brüel & Kjær Exciter Body Type 4801 with General Purpose Head Type 4812, driven by
 # Power Amplifier Type 2707.
-# Values from docs/BK shaker 4801 - general purpose head 4812.pdf (instruction manual, section 9.3.2
-# and Table 3.1) and docs/BK amplifier 2707.pdf (instruction manual, chapter 6).
+# Values from Shakers/BK shaker 4801 - general purpose head 4812.pdf (instruction manual,
+# section 9.3.2 and Table 3.1) and Shakers/BK amplifier 2707.pdf (instruction manual, chapter 6)
+# in the Nextcloud project folder.
 #
 # Assumed amplifier setup (adjust amp_input_full_v, max_drive_v, max_drive_rms_v and [sim]
 # together if you use something else):

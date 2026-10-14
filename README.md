@@ -2,16 +2,21 @@
 
 `vcactl` runs closed-loop **random vibration**, **sine sweep** and **stepped sine** (with
 optional **ring-down**) tests on a TIRA **TV 51110** or **TV 52110**
-(each with a BDA 120 power amplifier), a **BK 4809** with a BK 2718 amplifier, or a **BK 4801**
-body with **4812** general purpose head and a BK 2707 amplifier. The drive goes out through an
-**NI USB-4431**, **NI PXIe-4468** or **NI USB-6211**, and the loop is closed with an
+(each with a BDA 120 power amplifier), a **BK 4809** with a DAP-Audio Palladium P-2000 amplifier,
+or a **BK 4801** body with **4812** general purpose head and a BK 2707 amplifier. The drive goes
+out through an **NI USB-4431**, **NI PXIe-4468** or **NI USB-6211**, and the loop is closed with an
 **IEPE accelerometer**, whichever DAQ is used. The control band reaches **7 kHz**. For
-low-frequency tests a **laser displacement sensor** can close the loop instead (see below). It runs on
-**Windows 11** and **native Linux**, and includes a simulated shaker for development without
+low-frequency tests a **laser displacement sensor** can close the loop instead (see below). It runs
+on **Windows 11** and **native Linux**, and includes a simulated shaker for development without
 hardware.
 
 > WSL2 cannot run NI-DAQmx because the driver needs native kernel/USB access. Under WSL2, use
 > `--sim` only.
+
+The third-party datasheets and manuals (shakers, amplifiers, DAQs, sensors) are not in this
+repository. They are in the project's Nextcloud folder (`CSAA04 HF Shakers (Alessandro)`):
+`Shakers/` and `Controller + DAQ/`. The source comments in `config/shakers/*.toml` and
+`config/daq/*.toml` refer to them by file name.
 
 ## Hardware setup
 
@@ -29,7 +34,7 @@ to the specimen. How it is powered depends on the DAQ:
 
 | USB-6211 terminal | Connect to |
 |---|---|
-| AO 0 (pin 12) / AO GND (pin 14) | amplifier signal input (BNC) |
+| AO 0 (pin 12) / AO GND (pin 14) | amplifier signal input (BNC; TRS/XLR on the P-2000) |
 | AI 1 (pin 17) / AI 9 (pin 18) | IEPE conditioner output: signal / reference (differential) |
 | AI GND (pin 28) | if the conditioner output is **floating** (battery powered): 10–100 kΩ from AI 9 to AI GND |
 
@@ -47,6 +52,17 @@ conditioner gain if the conditioner has one (USB-6211). Choose the accelerometer
 conditioner gain) so that the expected peak response (about 4–5 × rms) stays inside
 `daq.ai_range_v`, and inside the input range of any other instrument that shares the signal.
 For example, 10 mV/g at 30 g rms gives peaks around 1.5 V on the 10 V range.
+
+**BK 4809 with the Palladium P-2000.** The P-2000 is an audio amplifier: voltage mode, no current
+limit, and 91× gain with the attenuator fully clockwise, which would reach the 4809's 5 A rms
+rating at only 0.11 V rms input. Use stereo mode (never bridged) with the shaker on one channel,
+and turn that channel's attenuator down to about 9.1× (1 kHz sine: 0.1 V rms in, 0.91 V rms out).
+`config/shakers/bk4809.toml` assumes 9.1× (full rating at 1.1 V rms input); if the measured gain
+differs, rescale the values as described at the top of that file. The software drive limits are
+the only protection of the coil, so leave the attenuator untouched between pretest and run. The
+amplifier is specified from 20 Hz (subsonic protection at 10 Hz), so profiles start at 20 Hz or
+higher. Connect the DAQ AO with a mono (TS) jack as the manual's unbalanced input: tip to AO 0,
+sleeve to AO GND. Measure the gain with the same cable.
 
 ### Laser displacement sensor (low-frequency testing)
 
@@ -115,12 +131,13 @@ Plot a run afterwards:
 python tools/plot_run.py runs/<run-dir>                  # add --save out.png for a file
 ```
 
-`docs/shaker_comparison.pdf` compares the configured shakers (ratings, amplifier and drive limits,
-payload limits). Rebuild it after changing a shaker file:
+`tools/shaker_comparison.py` builds `shaker_comparison.pdf`, which compares the configured shakers
+(ratings, amplifier and drive limits, payload limits). The PDF is kept in the Nextcloud folder
+(`Shakers/`), not in the repository. Rebuild it after changing a shaker file:
 
 ```
 pip install -e ".[report]"
-python tools/shaker_comparison.py                        # writes docs/shaker_comparison.pdf
+python tools/shaker_comparison.py --out "<Nextcloud folder>/Shakers/shaker_comparison.pdf"
 ```
 
 `tools/client_options_deck.py` builds a draft client presentation (.pptx) on shaker and
@@ -296,8 +313,9 @@ The shaker's `max_drive_v` must not exceed `daq.ao_range_v`. IEPE excitation req
   smoother but slower equalization.
 - The drive limits `max_drive_v` (peak clip) and `max_drive_rms_v` are in the shaker file,
   because they depend on the amplifier. For the TIRA shakers they are 3.5 V peak and 1.5 V rms;
-  the BDA 120 reaches full power at 3.5 V peak (2.47 V rms) sine input. Raise the rms limit only
-  if a profile needs more drive. `max_drive_rms_v` may not exceed `amp_input_full_v`.
+  the BDA 120 reaches full power at 3.5 V peak (2.47 V rms) sine input. For the BK 4809 they are
+  2.7 V peak and 0.88 V rms (80 % of the 1.1 V rms full-rating input at 9.1× gain). Raise the
+  rms limit only if a profile needs more drive. `max_drive_rms_v` may not exceed `amp_input_full_v`.
 
 ## Development
 

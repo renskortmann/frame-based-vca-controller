@@ -5,4 +5,5 @@ __pycache__/
 runs/
 build/
 dist/
-docs/shaker_controller_options_draft.pptx
+frame-based-vca-controller.code-workspace
+/shaker_comparison.pdf

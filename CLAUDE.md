@@ -14,8 +14,12 @@ This file only records what is not obvious from the code or README.
   `vcactl check --shaker bk4809 --daq usb6211 --profile config/test_profiles/example_flat.toml`
 - Work directly in the checked-out branch; no feature branch or PR is required.
 - Don't commit or push. The user reviews and commits all changes themselves.
-- Datasheets are in `docs/` (read PDFs with `pdftotext -layout`, or `pypdf` where poppler is not
-  installed). Shaker and DAQ profile values must come from them.
+- Datasheets and manuals are not in the repo (the old `docs/` folder is gone); they are in the
+  Nextcloud project folder (see "Documents outside the repo"), which is the second folder of the
+  VS Code workspace `frame-based-vca-controller.code-workspace` (git-ignored on purpose; don't add
+  it). Read PDFs with `pdftotext -layout`, or `pypdf` where poppler is not installed. Shaker and
+  DAQ profile values must come from them. The `docs/...` paths in the config file comments are
+  the old locations; the file names are unchanged.
 
 ## Shaker, DAQ + settings configs
 
@@ -60,9 +64,9 @@ cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is o
   table of payload limits for flat profiles from 20 Hz to f_max (columns: 0.001/0.01/0.05 g2/Hz,
   labelled by the 3 sigma peak-peak stroke they need), also capped by stroke for vertical mounting
   (sag + half the vibration stroke <= half-stroke). Regenerate the tables when the force rating,
-  moving mass, stiffness or stroke changes, and rebuild `docs/shaker_comparison.pdf` with
-  `tools/shaker_comparison.py` (same calculation; amplifier/cooling/mass facts that are not in
-  the shaker files are in its `EXTRA` table).
+  moving mass, stiffness or stroke changes, and rebuild `Shakers/shaker_comparison.pdf` in the
+  Nextcloud folder with `tools/shaker_comparison.py --out ...` (same calculation;
+  amplifier/cooling/mass facts that are not in the shaker files are in its `EXTRA` table).
 - Static sag is not subtracted from the usable displacement in the pre-flight check.
 
 ### TIRA TV 51110 / TV 52110 + BDA 120
@@ -72,15 +76,27 @@ cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is o
 - `[sim] amp_gain_a_per_v = 2.23` is the mid-band equivalent (5.5 A rms at 2.47 V rms) for the
   simulator's current-drive model; back-EMF damping in voltage mode is not modelled.
 
-### BK 4809 + 2718 assumptions (not stated in the datasheets)
+### BK 4809 + DAP-Audio Palladium P-2000 assumptions (not stated in the datasheets)
 
-- Amplifier setup: gain switch at 20 dB, input attenuator fully open, current limit knob at 5 A
-  or lower. Into the ~2 ohm coil this gives ~5 A/V, so the 5 A rms rating is reached at 1 V rms
-  input (`amp_input_full_v = 1.0`, `[sim] amp_gain_a_per_v = 5.0`). At 40 dB it would be 0.1 V rms.
-  If the amplifier gain changes, update `amp_input_full_v`, the drive limits and `[sim]` in the
-  shaker file together.
-- Drive limits: `max_drive_v = 2.5` (peak clip, about 3 sigma of the rms limit) and
-  `max_drive_rms_v = 0.8` (80 % of the 1 V rms rating).
+- The 4809 is driven by a Palladium P-2000 (an audio amplifier), no longer by the BK 2718. The
+  source is the Palladium Vintage series product manual (P-400 to P-2000; use the P-2000 column).
+- The P-2000 is a voltage amplifier without a current limit: 91x standard gain with the attenuator
+  fully clockwise, 750 W/8 ohm or 1025 W/4 ohm per channel. The drive limits in the shaker file are
+  the only protection of the 4809's 5 A rms coil rating. Use stereo mode, one channel, never
+  bridged; the ~2 ohm coil is below the 4 ohm rated load, but needs only ~10 V rms / 50 W.
+- Amplifier setup (the user's choice): the channel attenuator turned down to about 9.1 V/V
+  (-20 dB). Into the ~2 ohm coil this gives ~4.5 A/V, so the 5 A rms rating is reached at
+  1.1 V rms input (`amp_input_full_v = 1.1`, `[sim] amp_gain_a_per_v = 4.55`, a mid-band
+  equivalent; back-EMF damping in voltage mode is not modelled). The knob is uncalibrated, so the
+  actual gain G must be measured (1 kHz sine); then `amp_input_full_v = 10 / G`, both drive
+  limits scale by the same factor, and `[sim] amp_gain_a_per_v = G / 2`. Update them together.
+  With the attenuator fully clockwise the full rating would be at 0.11 V rms, and the shared
+  `pretest.drive_rms_v = 0.05` would already drive ~45 % of the rating.
+- Drive limits: `max_drive_v = 2.7` (peak clip, about 3 sigma of the rms limit) and
+  `max_drive_rms_v = 0.88` (80 % of the 1.1 V rms rating).
+- `f_min_hz = 20`: the P-2000 is specified 20 Hz - 20 kHz (+0.1/-3 dB), with a subsonic
+  protection circuit at 10 Hz and a high-frequency protection that disconnects the output on
+  excessive HF energy (threshold not given; untested with wideband random drive).
 - The datasheets give no random-vibration rating. `force_random_rms_n = 31.5` and
   `accel_random_rms_g = 53` are derived as the 44.5 N sine peak / sqrt(2), and 31.5 N / 0.060 kg.
   Replace them if a real rating becomes available.
@@ -106,11 +122,15 @@ cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is o
 ## Documents outside the repo
 
 - Project folder (Nextcloud, synced; anything written there is shared):
-  `C:\Users\rkortmann\Nextcloud\CITG-macrolab\Projecten\HF Shakers (Alessandro)`,
-  in WSL `/mnt/c/Users/rkortmann/Nextcloud/CITG-macrolab/Projecten/HF Shakers (Alessandro)`.
-  It also holds the datasheets, the VR9700 datasheet and the project's RFQ documents.
+  `C:\Users\rkortmann\Nextcloud\CITG-macrolab\Projecten\CSAA04 HF Shakers (Alessandro)`,
+  in WSL `/mnt/c/Users/rkortmann/Nextcloud/CITG-macrolab/Projecten/CSAA04 HF Shakers (Alessandro)`.
+  - `Shakers/`: shaker and amplifier datasheets/manuals (TIRA, BK 4809, Palladium P-2000, BK 4801/4812/2707),
+    the RFQ template, the shaker comparison (`shaker_comparison.pdf`, .docx) and other candidates.
+  - `Controller + DAQ/`: NI DAQ specifications and the DAQmx user manual, sensor datasheets
+    (ADXL326, optoNCDT 1220, VR9700) and the presentation below.
+  - `Ommatidia Lidar/`: Q1/Q2 lidar and VR9700 integration documents.
 - Presentation for the researcher (the user's colleague in the same department; the user is the lab
-  engineer supporting them): `shaker_controller_options_draft.pptx` in that folder.
+  engineer supporting them): `Controller + DAQ/shaker_controller_options_draft.pptx` in that folder.
   - The user edits it by hand in PowerPoint. Always edit that file (python-pptx on a copy, then copy
     back); never regenerate it with `tools/client_options_deck.py`, which only built the first draft
     (with € prices and a client tone that were later removed) and would overwrite the edits.

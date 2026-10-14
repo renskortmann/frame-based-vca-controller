@@ -2,7 +2,8 @@
 
 All ratings and limits are read from the shaker files, so rerun this after changing them.
 
-usage: python tools/shaker_comparison.py [--out docs/shaker_comparison.pdf]
+usage: python tools/shaker_comparison.py [--out shaker_comparison.pdf]
+The PDF is kept in the Nextcloud project folder (Shakers/), not in the repository.
 requires: pip install -e ".[report]"
 """
 
@@ -53,11 +54,11 @@ EXTRA = {
                     cooling="none needed", exciter_kg="36 kg", half_mm=None,
                     derived=set(), static_src="derived"),
     "bk4809": dict(short="B&K 4809",
-                   system="Br\u00fcel & Kj\u00e6r Vibration Exciter Type 4809 with Power "
-                          "Amplifier Type 2718",
-                   amp="B&K 2718",
-                   amp_out="75 VA into 3 Ω; current limit 1-5 A rms",
-                   amp_mode="voltage, 20 dB gain (assumed)",
+                   system="Br\u00fcel & Kj\u00e6r Vibration Exciter Type 4809 with a DAP-Audio "
+                          "Palladium P-2000 power amplifier",
+                   amp="DAP-Audio Palladium P-2000",
+                   amp_out="1025 W into 4 Ω per channel; no current limit",
+                   amp_mode="voltage, about 9.1 V/V (attenuator turned down; assumed)",
                    cooling="optional air (not used in ratings)", exciter_kg="8.3 kg", half_mm=None,
                    derived={"force_random_rms_n", "accel_random_rms_g"}, static_src="derived"),
     "bk4801_4812": dict(short="B&K 4801/4812",
@@ -66,7 +67,7 @@ EXTRA = {
                         amp="B&K 2707",
                         amp_out="220 VA into 0.5 Ω; 10 V rms, 22 A rms",
                         amp_mode="current, 14 A/V (assumed)",
-                        cooling="blower in body (required)", exciter_kg="80 kg; 3-phase mains",
+                        cooling="blower in body (required)", exciter_kg="80 kg; 230 V single-phase mains",
                         half_mm=6.35, derived={"force_random_rms_n", "accel_random_rms_g"},
                         static_src="manual"),
 }
@@ -186,7 +187,7 @@ def build(out: Path) -> None:
     story += [P("At a glance", h2), P(
         "The <b>B&amp;K 4801/4812</b> is the only heavy-payload system: about 4.5 times the random "
         "force of the TV 51110 and a 13.5 kg static payload limit, but it "
-        "weighs 80 kg, needs three-phase mains and must run with its blower. The <b>TIRA TV 51110</b> "
+        "weighs 80 kg and must run with its blower. The <b>TIRA TV 51110</b> "
         "and <b>TV 52110</b> are complete small systems with the same 100 N sine force; the TV 51110 "
         "has more random force (70 vs. 50 N rms) and acceleration, the TV 52110 more stroke "
         "(15 vs. 13 mm) and a stiffer suspension. The <b>B&amp;K 4809</b> has the lightest moving "
@@ -276,12 +277,12 @@ def build(out: Path) -> None:
         for text in (
             "The B&amp;K values come from old instruction manuals and a product datasheet; the "
             "manuals give no random ratings, so those are derived from the sine ratings.",
-            "Amplifier gains for the B&amp;K systems are assumptions (2718 at 20 dB, 2707 in "
-            "current mode with the gain fully clockwise). Different settings change the input "
-            "for full output and the drive limits.",
-            "The 4809 can technically run on the 2707, but the 2707's slow rms current trip "
-            "(50 s or 2.5 s averaging) protects the 4809 coil much less well than the 2718's "
-            "instantaneous current limiter; keep the 4809 on the 2718.",
+            "Amplifier gains for the B&amp;K systems are assumptions (P-2000 attenuator turned "
+            "down to about 9.1 V/V, to be measured; 2707 in current mode with the gain fully "
+            "clockwise). Different settings change the input for full output and the drive limits.",
+            "The P-2000 is an audio amplifier without a current limit, so for the 4809 the "
+            "software drive limits are the only protection of the 5 A rms coil rating. It is "
+            "specified from 20 Hz, so the 4809 profiles start at 20 Hz instead of 10 Hz.",
             "Only the simulator and the pre-flight check have been run for the B&amp;K setups; "
             "start real tests at a low level (for example --level -12).",
         ):
@@ -295,7 +296,7 @@ def build(out: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--out", type=Path, default=Path("docs/shaker_comparison.pdf"))
+    ap.add_argument("--out", type=Path, default=Path("shaker_comparison.pdf"))
     args = ap.parse_args()
     build(args.out)
     print(f"wrote {args.out}")

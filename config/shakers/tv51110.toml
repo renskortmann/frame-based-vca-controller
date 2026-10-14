@@ -1,5 +1,5 @@
 # TIRA Vibration Test System TV 51110 (exciter S 51110 + power amplifier BDA 120).
-# Values from docs/data_sheet_system_tv_51110_eng_V10.pdf.
+# Values from Shakers/data_sheet_system_tv_51110_eng_V10.pdf in the Nextcloud project folder.
 name = "TIRA TV 51110"
 f_min_hz = 2.0
 f_max_hz = 7000.0
