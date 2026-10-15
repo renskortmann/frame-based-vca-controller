@@ -7,6 +7,7 @@ import sys
 import typing
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Union
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -82,7 +83,7 @@ class DaqConfig:
     ao_channel: str = "ao0"
     ai_channel: str = "ai1"
     ai_terminal_config: str = "DIFF"
-    ai_range_v: float = 10.0
+    ai_range_v: Union[float, str] = "auto"  # "auto": smallest range for the expected peak
     ai_coupling: str = "DC"
     iepe_current_ma: float = 0.0
     ao_range_v: float = 10.0
@@ -144,6 +145,7 @@ class SafetyConfig:
     accel_crest_factor: float = 4.5
     open_loop_db: float = 12.0
     ai_overload_fraction: float = 0.98
+    ai_range_margin_db: float = 3.0       # auto AI range: headroom above the expected peak
     abort_rampdown_s: float = 0.05
 
 
@@ -210,6 +212,10 @@ def build_dataclass(cls, table: dict, where: str):
             else:
                 raise ConfigError(f"{where}.{f.name}: expected a list of {item.__name__}, "
                                   f"got {value!r}")
+        elif typ == Union[float, str]:
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise ConfigError(f"{where}.{f.name}: expected a number or a string, got {value!r}")
+            value = value if isinstance(value, str) else float(value)
         elif typ is bool:
             if not isinstance(value, bool):
                 raise ConfigError(f"{where}.{f.name}: expected true or false, got {value!r}")
@@ -310,9 +316,13 @@ def validate_daq(d: DaqConfig, where: str = "daq") -> None:
     if d.ai_terminal_config.upper() not in lim.ai_terminal_configs:
         raise ConfigError(f"{where}: daq.ai_terminal_config must be one of "
                           f"{_fmt(lim.ai_terminal_configs)} ({d.model})")
-    if not _one_of(d.ai_range_v, lim.ai_ranges_v):
-        raise ConfigError(f"{where}: daq.ai_range_v must be one of {_fmt(lim.ai_ranges_v)} "
-                          f"({d.model})")
+    if isinstance(d.ai_range_v, str):
+        if d.ai_range_v != "auto":
+            raise ConfigError(f"{where}: daq.ai_range_v must be \"auto\" or one of "
+                              f"{_fmt(lim.ai_ranges_v)} ({d.model})")
+    elif not _one_of(d.ai_range_v, lim.ai_ranges_v):
+        raise ConfigError(f"{where}: daq.ai_range_v must be \"auto\" or one of "
+                          f"{_fmt(lim.ai_ranges_v)} ({d.model})")
     if d.ao_terminal_config and d.ao_terminal_config.upper() not in lim.ao_terminal_configs:
         raise ConfigError(f"{where}: daq.ao_terminal_config must be "
                           + (f"one of {_fmt(lim.ao_terminal_configs)}" if lim.ao_terminal_configs
@@ -390,6 +400,8 @@ def validate_settings(cfg: Settings, where: str = "settings") -> None:
             or sc.settled_blocks < 1:
         raise ConfigError(f"{where}: sine.max_step_db, max_correction_db and ramp_s must be > 0, "
                           "settled_blocks >= 1")
+    if s.ai_range_margin_db < 0:
+        raise ConfigError(f"{where}: safety.ai_range_margin_db must be >= 0")
     if cfg.pretest.drive_rms_v <= 0:
         raise ConfigError(f"{where}: pretest.drive_rms_v must be > 0")
 

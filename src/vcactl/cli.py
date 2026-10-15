@@ -16,7 +16,7 @@ from .config import (DEFAULT_CONFIG_DIR, ConfigError, load_shaker, load_settings
 from .controller import Controller, State
 from .logger import STATUS_FIELDS, RunLogger
 from .profile import SineProfile, load_profile
-from .safety import preflight
+from .safety import preflight, select_ai_range
 from .sine import SINE_STATUS_FIELDS, SineController
 
 
@@ -39,6 +39,9 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                         "test_profiles/ (*.toml); keys resolve there")
     p.add_argument("--level", type=float, default=0.0,
                    help="target level in dB relative to the profile (default 0)")
+    p.add_argument("--ai-range", default=None,
+                   help="AI range in V (one of the DAQ's ranges) or 'auto': the smallest range "
+                        "for the expected peak at --level (default: daq.ai_range_v, normally auto)")
 
 
 def _add_run_opts(p: argparse.ArgumentParser) -> None:
@@ -148,9 +151,26 @@ def make_controller(settings, shaker, profile, backend, **kwargs):
     return cls(settings, shaker, profile, backend, **kwargs)
 
 
+def _ai_range_override(args, settings):
+    """``--ai-range``: None (use daq.ai_range_v), "auto" or one of the DAQ's ranges."""
+    value = args.ai_range
+    if value is None or value == "auto":
+        return value
+    lim = settings.daq.limits.ai_ranges_v
+    try:
+        v = float(value)
+    except ValueError:
+        v = None
+    if v is None or not any(abs(v - r) <= 1e-6 * max(r, 1.0) for r in lim):
+        raise ConfigError(f"--ai-range must be 'auto' or one of "
+                          f"{', '.join(f'{r:g}' for r in lim)} ({settings.daq.model})")
+    return v
+
+
 def cmd_check(args, settings, shaker, profile) -> int:
-    report = preflight(profile, shaker, settings, args.level)
-    print(f"shaker : {shaker.name}\ndaq    : {settings.daq.model}\n"
+    ai = select_ai_range(profile, settings, args.level, args.ai_range)
+    report = preflight(profile, shaker, settings, args.level, ai)
+    print(f"shaker : {shaker.name}\ndaq    : {settings.daq.model}, AI range {ai.format()}\n"
           f"sensor : {_sensor_text(settings)}\n"
           f"profile: {_profile_text(profile, args.level)}\n")
     print(report.format())
@@ -159,7 +179,9 @@ def cmd_check(args, settings, shaker, profile) -> int:
 
 
 def cmd_run(args, settings, shaker, profile, pretest_only: bool) -> int:
-    report = preflight(profile, shaker, settings, args.level)
+    ai = select_ai_range(profile, settings, args.level, args.ai_range)
+    report = preflight(profile, shaker, settings, args.level, ai)
+    print(f"AI range: {ai.format()}\n")
     print(report.format())
     if not report.ok:
         print("\npre-flight check FAILED; nothing was output")
@@ -186,10 +208,10 @@ def cmd_run(args, settings, shaker, profile, pretest_only: bool) -> int:
     last = [0.0]
     ctl = make_controller(settings, shaker, profile, backend, target_level_db=args.level,
                           duration_s=None if sine else getattr(args, "duration", None),
-                          logger=logger, seed=args.seed,
+                          logger=logger, seed=args.seed, ai_range_v=args.ai_range,
                           on_status=lambda row: _print_status(row, last))
     logger.meta({"version": __version__, "shaker": shaker, "settings": settings,
-                 "profile": profile, "level_db": args.level, "sim": args.sim,
+                 "profile": profile, "level_db": args.level, "ai_range": ai, "sim": args.sim,
                  "pretest_only": pretest_only, "started": time.strftime("%Y-%m-%dT%H:%M:%S")})
 
     def request_stop(signum, frame):
@@ -214,7 +236,8 @@ def cmd_run(args, settings, shaker, profile, pretest_only: bool) -> int:
     info = getattr(ctl, "pretest_info", None)
     if info:
         print("pretest: response {response_rms_g:.3g} g rms, noise {noise_rms_g:.3g} g rms, "
-              "SNR {snr_db:.1f} dB, mean coherence {coherence_mean:.3f}".format(**info)
+              "SNR {snr_db:.1f} dB, mean coherence {coherence_mean:.3f}, "
+              "drive {drive_rms_v:.3g} V rms".format(**info)
               + (f", predicted drive {info['predicted_drive_rms_v']:.3f} V rms"
                  if "predicted_drive_rms_v" in info else "")
               + (f", predicted drive {info['predicted_drive_pk_v']:.3f} V peak"
@@ -239,6 +262,7 @@ def main(argv=None) -> int:
         shaker = load_shaker(args.shaker, args.config_dir)
         profile = load_profile(resolve_config_path(args.profile, "test_profiles", args.config_dir))
         validate_setup(settings, shaker)
+        args.ai_range = _ai_range_override(args, settings)
     except ConfigError as exc:
         print(f"configuration error: {exc}", file=sys.stderr)
         return 2

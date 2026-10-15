@@ -77,6 +77,11 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   finite burst of zeros. Their converter filter delay (`limits.filter_delay_samples`) is added to
   the controller's drive/response alignment and is emulated by the simulator. For the PXIe-4468
   this delay depends on the rate (datasheet table); update it if `fs_io_hz` changes.
+- AI range: `ai_range_v = "auto"` (default in all DAQ files) is resolved per run by
+  `safety.select_ai_range` from the expected peak at `--level` (`expected_accel_peak_g` x
+  `v_per_g`, + `ai_range_margin_db`). The controller passes it to `backend.start(prefill,
+  ai_range_v)` and the `RuntimeMonitor`; `daq.ai_range_v` itself may still be "auto". One range
+  per run, so the pretest probes at -20 dB and lowers its drive to stay within half the range.
 - The DSA profiles are untested on hardware. The AI/AO start-trigger sync, coupling and IEPE
   settings follow the datasheets and the nidaqmx API but have only run against the simulator.
 

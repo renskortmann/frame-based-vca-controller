@@ -168,3 +168,42 @@ def test_low_g_run_with_pcb356b18():
     assert res.completed and res.state == State.DONE, res.reason
     assert abs(res.rms_err_db) < 0.5
     assert_safe_stop(shaker, backend)
+
+
+def test_auto_ai_range_low_level_scales_pretest():
+    """At -12 dB the auto range is 1 V; the 0.01 V pretest would peak near it on the BK 4809, so
+    the pretest drive is lowered and the run completes without an AI overload."""
+    settings = load_settings()
+    shaker = load_shaker("bk4809")
+    profile = load_profile(PROFILES / "low_g.toml")
+    ctl, backend, res = run(settings, shaker, profile, target_level_db=-12)
+    assert ctl.ai_range.auto and ctl.ai_range.range_v == 1.0
+    assert backend.ai_range == 1.0
+    assert res.completed and res.state == State.DONE, res.reason
+    assert abs(res.rms_err_db) < 0.5
+    info = ctl.pretest_info
+    assert info["ai_range_v"] == 1.0
+    assert info["drive_rms_v"] < settings.pretest.drive_rms_v
+    assert info["snr_db"] > settings.pretest.min_snr_db
+    assert_safe_stop(shaker, backend)
+
+
+def test_pretest_drive_kept_on_large_range():
+    """On a range with room for the pretest response the pretest drive is not changed."""
+    settings = load_settings()
+    shaker = load_shaker("bk4809")
+    profile = load_profile(PROFILES / "low_g.toml")
+    ctl, backend, res = run(settings, shaker, profile, pretest_only=True, ai_range_v=10.0)
+    assert res.completed, res.reason
+    assert not ctl.ai_range.auto
+    assert ctl.pretest_info["drive_rms_v"] == settings.pretest.drive_rms_v
+
+
+def test_manual_range_too_small_fails_preflight():
+    settings = load_settings()
+    shaker = load_shaker("bk4809")
+    profile = load_profile(PROFILES / "low_g.toml")
+    ctl, backend, res = run(settings, shaker, profile, ai_range_v=0.2)
+    assert not res.completed and res.state == State.ABORTED
+    assert "AI peak" in res.reason
+    assert backend.written == []                   # nothing was output

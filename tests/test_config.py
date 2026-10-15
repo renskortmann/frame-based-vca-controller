@@ -28,6 +28,8 @@ def test_wrong_type_rejected(tmp_path):
 
 @pytest.mark.parametrize("section,field,value", [
     ("daq", "ai_range_v", 2.0),
+    ("daq", "ai_range_v", "max"),
+    ("safety", "ai_range_margin_db", -1.0),
     ("daq", "fs_io_hz", 300000.0),
     ("daq", "ai_terminal_config", "XYZ"),
     ("control", "correction_gain", 0.0),
@@ -233,3 +235,17 @@ def test_settings_key(tmp_path):
     (tmp_path / "sensors" / "pcb356b18.toml").write_text(
         open("config/sensors/pcb356b18.toml").read())
     assert load_settings(config_dir=tmp_path).pretest.drive_rms_v == 0.02
+
+
+def test_ai_range_auto_default():
+    for daq in ("usb6211", "usb4431", "pxie4468"):
+        assert load_settings(daq=daq).daq.ai_range_v == "auto"
+
+
+def test_ai_range_number_from_toml(tmp_path):
+    p = tmp_path / "settings.toml"
+    p.write_text("[daq]\nai_range_v = 1\n")
+    assert load_settings(p).daq.ai_range_v == 1.0
+    p.write_text("[daq]\nai_range_v = true\n")
+    with pytest.raises(ConfigError, match="ai_range_v"):
+        load_settings(p)

@@ -14,10 +14,11 @@ class DaqFault(RuntimeError):
 class DaqBackend(Protocol):
     fs_io: float
 
-    def start(self, prefill: np.ndarray) -> None:
+    def start(self, prefill: np.ndarray, ai_range_v: float) -> None:
         """Queue ``prefill`` AO samples, then start AO (armed) and AI on one sample clock.
 
-        AO sample k and AI sample k are taken on the same clock edge.
+        AO sample k and AI sample k are taken on the same clock edge. AI uses +/-``ai_range_v``
+        for the whole run.
         """
 
     def write(self, data: np.ndarray) -> None:

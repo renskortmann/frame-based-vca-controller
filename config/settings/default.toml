@@ -41,7 +41,8 @@ displacement_sigma = 3.0       # peak = sigma * rms for displacement/velocity pr
 accel_crest_factor = 4.5       # random: expected acceleration peak = crest * rms, checked against
                                # the sensor range
 open_loop_db = 12.0            # abort if response is this far below the reference for 3 blocks
-ai_overload_fraction = 0.98    # abort if |AI| reaches this fraction of ai_range_v
+ai_overload_fraction = 0.98    # abort if |AI| reaches this fraction of the AI range
+ai_range_margin_db = 3.0       # auto AI range: headroom above the expected peak (random: crest x rms)
 abort_rampdown_s = 0.05
 
 [pretest]

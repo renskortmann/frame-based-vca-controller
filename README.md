@@ -134,6 +134,18 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
   USB-4431/PXIe-4468 defaults).
 - Underflow errors (-200621/-200290) on a slow or busy PC: increase `daq.ao_queue_blocks`.
   This adds latency.
+- **AI range.** `daq.ai_range_v = "auto"` (the default) picks, per run, the smallest range of
+  the device that holds the expected AI peak at `--level` plus `safety.ai_range_margin_db`
+  (3 dB) below `safety.ai_overload_fraction` (98 %) of the range. The expected peak is the
+  expected acceleration peak (see [Sensors](#sensors---sensor)) × the sensitivity at the DAQ
+  input. A smaller range gives a finer ADC step: on the USB-6211, 305 µV on ±10 V but 6 µV on
+  ±0.2 V. `check`, `pretest` and `run` print the chosen range; the pre-flight check fails if
+  even the largest range is too small. `--ai-range <V>` or a number in `daq.ai_range_v` sets
+  the range by hand.
+- The range stays the same for the whole run (noise floor, pretest, level ramp, test), so it is
+  chosen for the target level. The pretest first probes the response at −20 dB of
+  `pretest.drive_rms_v` and lowers its drive if the pretest would use more than half of the
+  range (low `--level` on a small range); it never raises it.
 
 ### Sensors (`--sensor`)
 
@@ -152,9 +164,9 @@ controller uses them as follows:
 - With IEPE excitation from the DAQ, `daq.iepe_current_ma` must lie within the sensor's IEPE
   range.
 
-Choose the accelerometer (and the conditioner gain) so that the expected peak response also
-stays inside `daq.ai_range_v`, and inside the input range of any other instrument that shares
-the signal.
+The AI range follows the expected peak automatically (see the DAQ notes above). Choose the
+accelerometer so that the expected peak also stays inside the input range of any other
+instrument that shares the signal.
 
 **PCB 356B18** (`pcb356b18`, serial LW266119): a triaxial, high-sensitivity sensor for
 low-frequency, low-level tests: 1000 mV/g nominal, ±5 g, 0.5–3000 Hz (±5 %), 25 g. Only one axis
@@ -308,6 +320,8 @@ Options of `check`, `pretest` and `run`
 - Defaults: `--daq usb6211`, `--sensor pcb356b18`, `--settings default` (alias: `--station`),
   `--config-dir config/`. All five take a key or a path.
 - `--level` shifts the profile level in dB (default 0).
+- `--ai-range` sets the AI range in V (one of the DAQ's ranges) or `auto` (default:
+  `daq.ai_range_v`, normally `auto`).
 
 Only for `pretest` and `run`:
 
@@ -354,7 +368,8 @@ Recommended first test on hardware:
   and 3σ peak-peak displacement against the shaker's data-sheet limits, plus the frequency
   range. The force check is the dynamic payload limit; each shaker file lists it for a few
   acceleration levels. Also checked: the acceleration peak (4.5 × rms for random profiles)
-  against the sensor range, and the band against the sensor's frequency range.
+  against the sensor range, the band against the sensor's frequency range, and the expected
+  AI peak (+ 3 dB) against the AI range.
 - **Runtime aborts:**
   - AI overload;
   - sensor over range (measured peak above the sensor file's `range_g_pk`);
@@ -390,6 +405,9 @@ Recommended first test on hardware:
 - Runtime aborts (`AI overload`, `sensor over range`, `drive clipping`, `open loop`):
   - Lower `--level`, verify amplifier gain position/cabling, verify accelerometer mounting and
     IEPE setup, then rerun `pretest`.
+  - `AI overload` on an automatically chosen range: the response is larger than the profile
+    predicts (for example a resonance outside the band, or a wrong sensitivity in the sensor
+    file). Check the sensor file, or choose a larger range with `--ai-range`.
 
 ## How it works
 
@@ -409,8 +427,8 @@ Recommended first test on hardware:
   output always comes from the controller.
 - **Sequence:**
   1. noise floor with zero drive;
-  2. pretest with flat low-level noise: H1 FRF and coherence, SNR and coherence checks,
-     predicted drive at the target level;
+  2. pretest with flat low-level noise (drive lowered if needed to fit the AI range): H1 FRF
+     and coherence, SNR and coherence checks, predicted drive at the target level;
   3. closed loop: drive PSD = C·S_ref/|H|², where the per-line correction C is updated every
      frame from the averaged control PSD. H continues to update during the run;
   4. level ramp from −12 dB in 3 dB steps, each held until the rms error is ≤ 1 dB, then the

@@ -7,7 +7,7 @@ device = "Dev1"                # NI device name as shown by `vcactl list-devices
 ao_channel = "ao0"             # -> amplifier input (AO 0 pin 12, AO GND pin 14)
 ai_channel = "ai1"             # <- IEPE conditioner output (or charge amplifier output)
 ai_terminal_config = "DIFF"    # DIFF (AI1+/AI9-), RSE or NRSE
-ai_range_v = 10.0              # ranges: 0.2, 1, 5, 10
+ai_range_v = "auto"            # "auto" (smallest range for the expected peak) or 0.2, 1, 5, 10
 ao_range_v = 10.0              # fixed +/-10 V
 fs_io_hz = 100000.0            # AI/AO rate; 20 MHz / fs_io_hz must be an integer
 decimation = 4                 # control rate = fs_io_hz / decimation (25 kHz)

@@ -62,3 +62,24 @@ def test_profile_and_settings_keys(capsys):
 def test_unknown_profile_key(capsys):
     assert main(["check", "--shaker", "bk4809", "--profile", "nope"]) == 2
     assert "nope.toml" in capsys.readouterr().err
+
+
+def test_check_ai_range(capsys):
+    args = ["check", "--shaker", "bk4809", "--profile", "low_g"]
+    assert main(args) == 0
+    assert "AI range +/-5 V (auto; expected peak 2.57 V)" in capsys.readouterr().out
+    assert main(args + ["--level", "-12"]) == 0
+    assert "AI range +/-1 V (auto" in capsys.readouterr().out
+    assert main(args + ["--ai-range", "1"]) == 2          # 2.57 V + 3 dB does not fit 1 V
+    out = capsys.readouterr().out
+    assert "AI range +/-1 V (manual" in out and "FAIL" in out
+    assert main(args + ["--ai-range", "2"]) == 2          # not a USB-6211 range
+    assert "--ai-range must be" in capsys.readouterr().err
+
+
+def test_pretest_sim_auto_range(tmp_path, capsys):
+    rc = main(["pretest", "--sim", "--yes", "--shaker", "bk4809", "--profile", "low_g",
+               "--level", "-12", "--log-dir", str(tmp_path), "--seed", "1"])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "AI range: +/-1 V (auto" in out and "result : pretest completed" in out

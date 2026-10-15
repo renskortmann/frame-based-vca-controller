@@ -33,7 +33,12 @@ from .dsp.resample import Decimator, Interpolator, design_lowpass, total_delay_c
 from .dsp.spectral import AutoSpectrumAverager, CrossSpectrumAverager, Spectrum
 from .logger import RunLogger
 from .profile import Profile
-from .safety import AbortError, RuntimeMonitor, preflight
+from .safety import AbortError, RuntimeMonitor, preflight, select_ai_range
+
+# The pretest drive is lowered (never raised) so that its AI peak stays below this fraction of
+# the AI range: the range is chosen for the target level, which may be below the pretest level.
+PRETEST_RANGE_FRACTION = 0.5
+PRETEST_PROBE_DB = -20.0        # level of the probe that measures the pretest response
 
 
 class State(str, Enum):
@@ -113,7 +118,8 @@ class ControllerBase:
                  backend: DaqBackend, *, target_level_db: float = 0.0,
                  duration_s: float | None = None, logger: RunLogger | None = None,
                  seed: int | None = None,
-                 on_status: Callable[[dict], None] | None = None):
+                 on_status: Callable[[dict], None] | None = None,
+                 ai_range_v: float | str | None = None):
         validate_setup(settings, shaker)
         self.settings, self.shaker, self.profile = settings, shaker, profile
         self.backend, self.logger, self.on_status = backend, logger, on_status
@@ -161,7 +167,9 @@ class ControllerBase:
         self.state = State.IDLE
         self.samples = 0
         self.run_time_s = 0.0
-        self.monitor = RuntimeMonitor(settings, shaker)
+        # one AI range for the whole run, chosen for the target level (ai_range_v: CLI override)
+        self.ai_range = select_ai_range(profile, settings, target_level_db, ai_range_v)
+        self.monitor = RuntimeMonitor(settings, shaker, self.ai_range)
         self.stop_requested = False
         self._drive_psd = np.zeros(len(self.freqs))
         self.track_spectra = True        # False: only the response history is kept
@@ -279,11 +287,33 @@ class ControllerBase:
             sd = self._step(zeros)
             self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
 
+    def _pretest_drive_rms(self) -> float:
+        """Probe at PRETEST_PROBE_DB below ``pretest.drive_rms_v`` and lower the pretest drive if its
+        AI peak would exceed PRETEST_RANGE_FRACTION of the AI range (the range is chosen for the
+        target level, which may be below the pretest level)."""
+        drive = self.settings.pretest.drive_rms_v
+        k = 10 ** (PRETEST_PROBE_DB / 20)
+        self._new_segment("probe", 1.0)
+        psd = flat_psd(self.freqs, self.band_lo, self.band_hi, drive * k)
+        self._drive_psd = psd
+        peak = 0.0
+        n = self.P + 4                   # AO queue delay, then 2 blocks of response
+        for i in range(n):
+            self._check_stop()
+            sd = self._step(psd)
+            self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            if i >= n - 2:
+                peak = max(peak, sd.ai_peak_v)
+        expected = peak / k              # AI peak at the full pretest drive
+        limit = PRETEST_RANGE_FRACTION * self.ai_range.range_v
+        return drive * min(1.0, limit / expected) if expected > 0 else drive
+
     def _pretest_phase(self) -> None:
         self.state = State.PRETEST
         pt = self.settings.pretest
+        drive_rms = self._pretest_drive_rms()
         seg = self._new_segment("pretest", 1.0)
-        psd = flat_psd(self.freqs, self.band_lo, self.band_hi, pt.drive_rms_v)
+        psd = flat_psd(self.freqs, self.band_lo, self.band_hi, drive_rms)
         self._drive_psd = psd
         while self.seg_frames[seg] < pt.frames:
             self._check_stop()
@@ -298,7 +328,8 @@ class ControllerBase:
         snr_db = 20 * math.log10(resp_rms / noise_rms) if noise_rms > 0 else math.inf
         coh_mean = float(np.mean(self.frf.coherence[b]))
         self.pretest_info = {"response_rms_g": resp_rms, "noise_rms_g": noise_rms,
-                             "snr_db": snr_db, "coherence_mean": coh_mean}
+                             "snr_db": snr_db, "coherence_mean": coh_mean,
+                             "drive_rms_v": drive_rms, "ai_range_v": self.ai_range.range_v}
         if self.logger:
             self.logger.spectra("pretest_frf", self.freqs, {
                 "h_mag_g_per_v": np.abs(self.frf.h1), "h_phase_deg": np.degrees(np.angle(self.frf.h1)),
@@ -329,13 +360,14 @@ class ControllerBase:
 
     # ------------------------------------------------------------------ entry
     def run(self, pretest_only: bool = False) -> RunResult:
-        report = preflight(self.profile, self.shaker, self.settings, self.target_level_db)
+        report = preflight(self.profile, self.shaker, self.settings, self.target_level_db,
+                           self.ai_range)
         if not report.ok:
             return self._result(False, State.ABORTED, "pre-flight check failed:\n" + report.format())
 
         reason, completed = "completed", False
         self.t0_wall = time.time()      # stream start, for wall-clock event times (approximate)
-        self.backend.start(np.zeros(self.P * self.block_io))
+        self.backend.start(np.zeros(self.P * self.block_io), self.ai_range.range_v)
         self.drive_hist.append(np.zeros(self.P * self.half))
         self.seg_hist.append(np.zeros(self.P * self.half, dtype=np.int64))
         try:

@@ -40,7 +40,7 @@ class SimulatedDaq:
                  sensor: SensorConfig | None = None, realtime: bool = False,
                  seed: int | None = None, disconnect_after_s: float | None = None):
         self.fs_io = settings.daq.fs_io_hz
-        self.ai_range = settings.daq.ai_range_v
+        self.ai_range = None           # set by start()
         self.ao_range = settings.daq.ao_range_v
         if sensor is not None:                    # a sensor other than the one in the settings
             settings = dataclasses.replace(settings, sensor=sensor)
@@ -60,7 +60,8 @@ class SimulatedDaq:
         self.written: list[np.ndarray] = []
         self.stopped_at_zero = None
 
-    def start(self, prefill: np.ndarray) -> None:
+    def start(self, prefill: np.ndarray, ai_range_v: float) -> None:
+        self.ai_range = ai_range_v
         self.queue = np.concatenate([np.zeros(self.delay_samples), prefill])
         self.running = True
         self.t0 = time.monotonic()

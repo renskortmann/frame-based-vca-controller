@@ -1,7 +1,7 @@
 import pytest
 
 from vcactl.profile import load_profile
-from vcactl.safety import AbortError, RuntimeMonitor, preflight
+from vcactl.safety import AiRange, AbortError, RuntimeMonitor, preflight, select_ai_range
 from conftest import PROFILES
 
 
@@ -33,7 +33,7 @@ def test_band_beyond_shaker(settings, tv51110, tmp_path):
 
 
 def test_runtime_monitor(settings, tv51110):
-    m = RuntimeMonitor(settings, tv51110)
+    m = RuntimeMonitor(settings, tv51110, AiRange(10.0, False, 0.0, 0.0))
     m.check_io(1.0, 0.5, 0.0)
     with pytest.raises(AbortError, match="overload"):
         m.check_io(9.9, 0.5, 0.0)
@@ -86,7 +86,8 @@ def test_sensor_range_and_band(tv51110, flat_profile, tmp_path):
     from vcactl.config import load_settings
     st = load_settings()                       # PCB 356B18: +/-5 g, 0.5-3000 Hz
     failed = {c.name for c in preflight(flat_profile, tv51110, st).checks if not c.ok}
-    assert failed == {"accel peak (4.5 s) <= sensor"}            # 4.45 g rms * 4.5
+    assert failed == {"accel peak (4.5 s) <= sensor",            # 4.45 g rms * 4.5
+                      "AI peak (+3 dB) <= range"}                # 21 V at 1048 mV/g > 10 V
     p = tmp_path / "to5k.toml"
     p.write_text("breakpoints = [{ f_hz = 20.0, psd_g2_hz = 1e-5 }, "
                  "{ f_hz = 5000.0, psd_g2_hz = 1e-5 }]\n")
@@ -111,7 +112,45 @@ def test_payload_includes_sensor_mass(settings, flat_profile):
 
 def test_sensor_over_range_monitor(tv51110):
     from vcactl.config import load_settings
-    m = RuntimeMonitor(load_settings(), tv51110)   # 1048 mV/g, +/-5 g, 10 V AI range
+    m = RuntimeMonitor(load_settings(), tv51110,   # 1048 mV/g, +/-5 g, 10 V AI range
+                       AiRange(10.0, False, 0.0, 0.0))
     m.check_io(5.2, 0.0, 0.0)                      # 4.96 g
     with pytest.raises(AbortError, match="sensor over range"):
         m.check_io(5.3, 0.0, 0.0)                  # 5.06 g, below the AI overload limit
+
+
+def test_select_ai_range_auto():
+    from vcactl.config import load_settings
+    st = load_settings()                       # USB-6211 (0.2, 1, 5, 10 V), PCB 356B18 1048 mV/g
+    low_g = load_profile(PROFILES / "low_g.toml")   # 0.546 g rms: 2.46 g peak (4.5 s)
+    ai = select_ai_range(low_g, st)
+    assert ai.auto and ai.range_v == 5.0 and ai.peak_v == pytest.approx(2.575, rel=1e-3)
+    assert select_ai_range(low_g, st, level_db=-12).range_v == 1.0     # 0.65 V * 1.41 / 0.98
+    assert select_ai_range(low_g, st, level_db=-40).range_v == 0.2
+    assert select_ai_range(low_g, st, level_db=6).range_v == 10.0
+    manual = select_ai_range(low_g, st, level_db=-40, override=10.0)
+    assert not manual.auto and manual.range_v == 10.0
+
+
+def test_ai_range_preflight_check(tv51110):
+    import dataclasses
+    from vcactl.config import load_settings
+    st = load_settings()
+    low_g = load_profile(PROFILES / "low_g.toml")
+    name = "AI peak (+3 dB) <= range"
+    assert preflight(low_g, tv51110, st).ok                            # auto: 5 V
+    failed = {c.name for c in preflight(low_g, tv51110, st,
+                                        ai_range=select_ai_range(low_g, st, override=1.0)).checks
+              if not c.ok}
+    assert failed == {name}                                            # 3.6 V on 1 V
+    st10 = dataclasses.replace(st, daq=dataclasses.replace(st.daq, ai_range_v=1.0))
+    assert name in {c.name for c in preflight(low_g, tv51110, st10).checks if not c.ok}
+
+
+def test_runtime_monitor_needs_range(tv51110):
+    from vcactl.config import load_settings
+    with pytest.raises(ValueError, match="auto"):
+        RuntimeMonitor(load_settings(), tv51110)
+    m = RuntimeMonitor(load_settings(), tv51110, AiRange(1.0, True, 0.3, 0.6))
+    with pytest.raises(AbortError, match="automatically.*--ai-range"):
+        m.check_io(0.99, 0.0, 0.0)

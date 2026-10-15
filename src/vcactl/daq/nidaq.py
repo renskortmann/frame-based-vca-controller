@@ -69,6 +69,7 @@ class NiDaq:
         self._reader = self._writer = None
         self._ai_buf = np.zeros(block_io)
         self.actual_rate = None
+        self.ai_range_v = None
 
     def _create_tasks(self, prefill_len: int) -> None:
         import nidaqmx
@@ -85,7 +86,7 @@ class NiDaq:
         self.ai_task = nidaqmx.Task("vcactl_ai")
         ai = self.ai_task.ai_channels.add_ai_voltage_chan(
             f"{dev}/{d.ai_channel}", terminal_config=term,
-            min_val=-d.ai_range_v, max_val=d.ai_range_v)
+            min_val=-self.ai_range_v, max_val=self.ai_range_v)
         if len(d.limits.ai_couplings) > 1:
             ai.ai_coupling = Coupling[d.ai_coupling.upper()]
         if d.limits.iepe_currents_ma:
@@ -137,7 +138,8 @@ class NiDaq:
         except (nidaqmx.errors.DaqError, nidaqmx.errors.DaqWarning) as exc:
             raise DaqFault(str(exc).strip()) from exc
 
-    def start(self, prefill: np.ndarray) -> None:
+    def start(self, prefill: np.ndarray, ai_range_v: float) -> None:
+        self.ai_range_v = ai_range_v
         try:
             self._call(self._create_tasks, len(prefill))
             self._call(self._writer.write_many_sample, np.ascontiguousarray(prefill, dtype=float))
