@@ -8,8 +8,12 @@ This file only records what is not obvious from the code or README.
 
 - Setup: `python -m venv .venv && .venv/bin/pip install -e ".[plot,test]"`, then `.venv/bin/pytest`.
   All tests use the simulated backend, so no hardware is needed.
-- NI-DAQmx does not work under WSL2. In WSL2 always use `--sim`; real hardware needs native
-  Windows or Linux.
+- NI-DAQmx does not work under WSL2. In WSL2 always use `--sim`. Real hardware needs native
+  Windows 11: NI-DAQmx for Linux does not support the USB-6211 or USB-4431 (NI's OS compatibility
+  table, `Controller + DAQ/NI Hardware and Software Operating System Compatibility Data.xlsx` in
+  the Nextcloud folder); only the PXIe-4468 also runs on Linux. The tests, `check` and a `--sim`
+  run passed with Windows Python 3.12 (2026-10-21). Install the Windows checkout editable
+  (`pip install -e`): `DEFAULT_CONFIG_DIR` is found relative to the source tree.
 - Check a profile without hardware:
   `vcactl check --shaker bk4809 --daq usb6211 --profile low_g`
 - Work directly in the checked-out branch; no feature branch or PR is required.

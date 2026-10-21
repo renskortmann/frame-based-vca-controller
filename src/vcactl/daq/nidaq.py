@@ -1,4 +1,4 @@
-"""NI-DAQmx backend (Windows 11 and native Linux) for the devices in ``config/daq``.
+"""NI-DAQmx backend (Windows 11; native Linux only for the PXIe-4468) for the devices in ``config/daq``.
 
 One AO channel drives the amplifier, one AI channel reads the accelerometer signal. AI and AO run
 at the same rate and start together, so AO sample k and AI sample k belong to the same clock edge

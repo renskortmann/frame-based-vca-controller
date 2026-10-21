@@ -4,11 +4,13 @@
 through an NI DAQ and closes the loop with an IEPE accelerometer. It can run various test
 profiles and can be configured for different hardware (shaker and amplifier, DAQ, sensor). Both
 are explained below, under [Configuration](#configuration): the hardware files first, then the
-[test profiles](#test-profiles---profile). It runs on **Windows 11** and **native Linux**, and
-includes a simulated shaker for development without hardware.
+[test profiles](#test-profiles---profile). Real hardware runs on **Windows 11**; the simulated
+shaker (`--sim`) runs anywhere, for development without hardware.
 
-> WSL2 cannot run NI-DAQmx because the driver needs native kernel/USB access. Under WSL2, use
-> `--sim` only.
+> NI-DAQmx for Linux does not support the USB-6211 or the USB-4431 (NI's OS compatibility
+> table: Windows only); of the DAQ profiles only the PXIe-4468 also runs on native Linux. WSL2
+> cannot run NI-DAQmx at all, because the driver needs native kernel/USB access. Under Linux or
+> WSL2, use `--sim` only.
 
 Contents:
 
@@ -39,8 +41,9 @@ Contents:
    ```
 4. Install the **NI-DAQmx driver** (required for real hardware, separate from the Python package):
    - Windows 11: NI-DAQmx from ni.com, or `python -m nidaqmx installdriver` after step 3.
-   - Linux: NI-DAQmx for Linux on a supported distribution (Ubuntu LTS, RHEL, openSUSE). Follow
-     NI's repository instructions and reboot so the kernel modules load.
+   - Linux (PXIe-4468 only; the USB devices are not supported): NI-DAQmx for Linux on a
+     supported distribution (Ubuntu LTS, RHEL, openSUSE). Follow NI's repository instructions and
+     reboot so the kernel modules load.
 5. Check that the device is visible. If it has a different name, set `daq.device` to that name:
    ```
    vcactl list-devices
