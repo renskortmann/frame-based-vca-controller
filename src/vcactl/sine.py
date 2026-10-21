@@ -84,12 +84,12 @@ class SineController(ControllerBase):
     # ------------------------------------------------------------------ setup hooks
     def _pretest_band(self) -> tuple[float, float]:
         """Test band widened by 1/3 octave and 3 lines each side, inside what the shaker,
-        and the control rate allow."""
+        and the DAQ band allow."""
         p = self.profile
         lo = min(p.f_lo * 2 ** (-1 / 3), p.f_lo - 3 * self.df)
         hi = max(p.f_hi * 2 ** (1 / 3), p.f_hi + 3 * self.df)
         lo = max(lo, 2 * self.df, self.shaker.f_min_hz)
-        hi = min(hi, 0.3 * self.fs, self.shaker.f_max_hz)
+        hi = min(hi, self.settings.f_band_max_hz, self.shaker.f_max_hz)
         return lo, max(hi, p.f_hi)
 
     def _check_predicted_drive(self) -> None:

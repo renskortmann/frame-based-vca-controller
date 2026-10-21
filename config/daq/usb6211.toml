@@ -30,3 +30,8 @@ antialias_filter = false       # AI must be oversampled: decimation >= 2
 ao_sync = "sample_clock"       # AO is clocked from ai/SampleClock
 ao_on_demand = true
 filter_delay_samples = 0.0     # SAR ADC and R-2R DAC: no converter filter delay
+passband_fraction = 0.5        # no converter filter (Nyquist only); the decimation FIR sets the band
+# Highest test frequency (Settings.f_band_max_hz = 0.3 * fs_io_hz / decimation): 7.5 kHz with
+# the settings above; at most 37.5 kHz with fs_io_hz = 250000 and decimation = 2. Without an
+# analog anti-aliasing filter, response content near fs_io_hz folds into the band, and the AO
+# images near fs_io_hz are only attenuated by the zero-order hold.

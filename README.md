@@ -132,9 +132,33 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
 
 - `conditioner_gain` (default 1) is the gain of an external IEPE conditioner between the sensor
   and AI (USB-6211).
-- `daq.fs_io_hz` must be a rate the device supports. The control band is limited to
-  0.6 × control Nyquist (7.5 kHz with the USB-6211 defaults, 7.68 kHz with the
-  USB-4431/PXIe-4468 defaults).
+- `daq.fs_io_hz` must be a rate the device supports.
+- **Highest test frequency.** The pre-flight check `profile f_hi <= DAQ band` limits the
+  profile to the converter passband, `limits.passband_fraction` × `fs_io_hz`, and, with
+  `decimation` > 1, to the passband of the rate-change FIR filter, 0.6 × control Nyquist
+  (0.3 × `fs_io_hz` / `decimation`). The sine pretest band is clipped to the same limit. If the
+  DAQ were the only limit (shaker, amplifier, sensor and PC infinitely fast):
+
+  | `--daq` | Default settings | Highest test frequency | Settings for it |
+  |---|---|---|---|
+  | `usb6211` | 7.5 kHz | 37.5 kHz | `fs_io_hz = 250000`, `decimation = 2` |
+  | `usb4431` | 7.68 kHz | 43.5 kHz | `fs_io_hz = 96000`, `decimation = 1` |
+  | `pxie4468` | 7.68 kHz | 90.8 kHz | `fs_io_hz = 200000`, `decimation = 1`, `filter_delay_samples = 106` |
+
+  - USB-6211: the FIR filter sets the band, since `decimation` must be ≥ 2. The device has no
+    analog anti-aliasing or reconstruction filter. Response content near `fs_io_hz` folds into
+    the band, and the AO images near `fs_io_hz` are only about 15 dB below the drive at
+    37.5 kHz. At 250 kS/s the 4,095-sample AI FIFO lasts 16 ms, and the rates need a
+    Hi-Speed USB connection.
+  - USB-4431 and PXIe-4468: the built-in converter filters are alias-free up to 0.453 fs and
+    0.454 fs. With `decimation = 1` there is no FIR filter, so the converter passband is
+    the limit. The USB-4431 rate must be an AO update rate (96 kS/s is the highest).
+  - PXIe-4468: the AO delay depends on the rate (65 samples at ≤ 10 kS/s up to 106 at
+    200 kS/s, datasheet table). Update `filter_delay_samples` with `fs_io_hz`.
+  - The line spacing grows with the control rate (Δf = control rate / `frame_size`), and the
+    profile must start at ≥ 2 Δf. With the default `[control] frame_size = 4096` the rates above
+    give f_lo ≥ 61 Hz (USB-6211), 47 Hz (USB-4431) or 98 Hz (PXIe-4468). For a 20 Hz start, use
+    `frame_size = 16384` (USB-6211, USB-4431) or `32768` (PXIe-4468).
 - Underflow errors (-200621/-200290) on a slow or busy PC: increase `daq.ao_queue_blocks`.
   This adds latency.
 - **AI range.** `daq.ai_range_v = "auto"` (the default) picks, per run, the smallest range of
@@ -424,7 +448,9 @@ Recommended first test on hardware:
   at 51.2 kS/s with 2× decimation (25.6 kS/s control rate, Δf = 6.25 Hz). Their AO has its own
   sample clock from the same timebase and starts on `ai/StartTrigger`. The converter filters
   delay the response by about 100 samples (`limits.filter_delay_samples` in the DAQ profile),
-  and the controller shifts the drive by that amount before estimating the FRF.
+  and the controller shifts the drive by that amount before estimating the FRF. They can also
+  run with `decimation = 1` (no FIR filter), which raises the band limit to the converter
+  passband (see [Highest test frequency](#daq-devices---daq)).
 - **Drive:** each frame gets new random phases. Frames are sqrt-Hann windowed and overlap-added
   at 50 %, giving a continuous, Gaussian, non-periodic signal. AO regeneration is off, so the
   output always comes from the controller.

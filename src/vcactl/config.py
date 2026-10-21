@@ -73,6 +73,7 @@ class DaqLimits:
                                           # "start_trigger": AO starts on ai/StartTrigger
     ao_on_demand: bool                    # AO supports software-timed (on-demand) writes
     filter_delay_samples: float           # AO + AI converter filter delay in fs_io samples
+    passband_fraction: float              # converter passband (AI and AO) as a fraction of fs_io
 
 
 @dataclass(frozen=True)
@@ -169,6 +170,16 @@ class Settings:
     @property
     def fs_control_hz(self) -> float:
         return self.daq.fs_io_hz / self.daq.decimation
+
+    @property
+    def f_band_max_hz(self) -> float:
+        """Highest test frequency the DAQ allows: the converter passband
+        (``limits.passband_fraction * fs_io_hz``) and, with decimation, the passband of the
+        rate-change FIR (0.6 x control Nyquist)."""
+        f = self.daq.limits.passband_fraction * self.daq.fs_io_hz
+        if self.daq.decimation > 1:
+            f = min(f, 0.3 * self.fs_control_hz)
+        return f
 
     @property
     def v_per_g(self) -> float:
@@ -352,6 +363,8 @@ def validate_daq(d: DaqConfig, where: str = "daq") -> None:
                               f"({d.model})")
     if d.decimation < 1:
         raise ConfigError(f"{where}: daq.decimation must be >= 1")
+    if not 0 < lim.passband_fraction <= 0.5:
+        raise ConfigError(f"{where}: limits.passband_fraction must be in (0, 0.5]")
     if d.conditioner_gain <= 0:
         raise ConfigError(f"{where}: daq.conditioner_gain must be > 0")
     if not lim.antialias_filter and d.decimation < 2:

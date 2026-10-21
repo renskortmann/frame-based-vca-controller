@@ -36,3 +36,7 @@ ao_on_demand = false           # DSA AO is hardware-timed only
 # AO output delay 75 samples at 50-60 kS/s (65 at <= 10 kS/s .. 106 at 200 kS/s); the AI digital
 # filter delay is compensated to 0 by the driver. Update this when fs_io_hz changes.
 filter_delay_samples = 75.0
+passband_fraction = 0.454      # AI alias-free and AO passband: DC to 0.454 fs
+# Highest test frequency (Settings.f_band_max_hz): 7.68 kHz with the settings above
+# (0.3 * fs_io_hz / decimation); with decimation = 1 it is 0.454 * fs_io_hz, at most 90.8 kHz
+# with fs_io_hz = 200000 (then filter_delay_samples = 106).

@@ -102,6 +102,32 @@ def test_dsa_profiles():
     assert pxie4468.limits.ai_ranges_v[0] == 0.316 and pxie4468.limits.fs_max_hz == 200000
 
 
+@pytest.mark.parametrize("daq,fs_io_hz,decimation,f_max", [
+    ("usb6211", None, None, 7500.0),          # defaults: 0.6 x control Nyquist
+    ("usb4431", None, None, 7680.0),
+    ("pxie4468", None, None, 7680.0),
+    ("usb6211", 250000.0, 2, 37500.0),        # highest rate, lowest decimation
+    ("usb4431", 96000.0, 1, 0.453 * 96000),   # decimation 1: converter passband
+    ("pxie4468", 200000.0, 1, 0.454 * 200000),
+])
+def test_daq_band_limit(daq, fs_io_hz, decimation, f_max):
+    st = load_settings(daq=daq)
+    if fs_io_hz:
+        st = dataclasses.replace(st, daq=dataclasses.replace(st.daq, fs_io_hz=fs_io_hz,
+                                                             decimation=decimation))
+        validate_settings(st)
+    assert st.f_band_max_hz == pytest.approx(f_max)
+
+
+@pytest.mark.parametrize("value", [0.0, 0.6])
+def test_passband_fraction_validated(value):
+    st = load_settings(daq="usb4431")
+    bad = dataclasses.replace(st, daq=dataclasses.replace(
+        st.daq, limits=dataclasses.replace(st.daq.limits, passband_fraction=value)))
+    with pytest.raises(ConfigError, match="passband_fraction"):
+        validate_settings(bad)
+
+
 @pytest.mark.parametrize("daq,field,value", [
     ("usb4431", "fs_io_hz", 50000.0),         # not an AO update rate
     ("usb4431", "ai_range_v", 5.0),

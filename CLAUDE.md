@@ -81,6 +81,14 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   finite burst of zeros. Their converter filter delay (`limits.filter_delay_samples`) is added to
   the controller's drive/response alignment and is emulated by the simulator. For the PXIe-4468
   this delay depends on the rate (datasheet table); update it if `fs_io_hz` changes.
+- Band limit (`Settings.f_band_max_hz`, pre-flight check `profile f_hi <= DAQ band`):
+  `limits.passband_fraction` x `fs_io_hz` (0.5 for the USB-6211, which has no converter
+  filter; 0.453 USB-4431; 0.454 PXIe-4468) and, with `decimation` > 1, 0.3 x control rate
+  (the FIR passband). Highest test frequency with the DAQ as the only limit: USB-6211 37.5 kHz
+  (250 kS/s, decimation 2), USB-4431 43.5 kHz (96 kS/s, decimation 1), PXIe-4468 90.8 kHz
+  (200 kS/s, decimation 1). Decimation 1 has run only in the simulator. The defaults stay at
+  about 7.5 kHz; the higher rates need a larger `frame_size` for a 20 Hz lower band edge
+  (README, DAQ devices).
 - AI range: `ai_range_v = "auto"` (default in all DAQ files) is resolved per run by
   `safety.select_ai_range` from the expected peak at `--level` (`expected_accel_peak_g` x
   `v_per_g`, + `ai_range_margin_db`). The controller passes it to `backend.start(prefill,

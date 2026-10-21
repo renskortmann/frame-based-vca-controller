@@ -158,6 +158,21 @@ def test_converges_on_dsa_devices(daq, tv51110, wideband_profile):
     assert_safe_stop(tv51110, backend)
 
 
+def test_converges_without_decimation(tv51110, tmp_path):
+    """USB-4431 at 25.6 kS/s, decimation 1: a band above the 0.6 x Nyquist FIR limit (3.84 kHz
+    with decimation 2) up to the TV 51110's 7 kHz."""
+    settings = load_settings(daq="usb4431", sensor=TEST_SENSOR)
+    settings = dataclasses.replace(settings, daq=dataclasses.replace(
+        settings.daq, fs_io_hz=25600.0, decimation=1))
+    p = tmp_path / "band.toml"
+    p.write_text("breakpoints = [{ f_hz = 20.0, psd_g2_hz = 0.005 }, "
+                 "{ f_hz = 7000.0, psd_g2_hz = 0.005 }]\n")
+    assert settings.f_band_max_hz >= 7000.0 > 0.3 * 25600.0 / 2
+    ctl, backend, res = run(settings, tv51110, load_profile(p))
+    assert res.completed and res.state == State.DONE, res.reason
+    assert abs(res.rms_err_db) < 0.5
+    assert_safe_stop(tv51110, backend)
+
 
 def test_low_g_run_with_pcb356b18():
     """Default sensor (PCB 356B18, +/-5 g) on the BK 4809: the pretest and run stay in range."""

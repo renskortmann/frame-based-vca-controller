@@ -1,8 +1,11 @@
+import dataclasses
+
 import pytest
 
+from vcactl.config import load_settings, load_shaker
 from vcactl.profile import load_profile
 from vcactl.safety import AiRange, AbortError, RuntimeMonitor, preflight, select_ai_range
-from conftest import PROFILES
+from conftest import PROFILES, TEST_SENSOR
 
 
 def test_bundled_profiles_pass(settings, shaker):
@@ -30,6 +33,18 @@ def test_band_beyond_shaker(settings, tv51110, tmp_path):
     p = tmp_path / "hf.toml"
     p.write_text("breakpoints = [{ f_hz = 100.0, psd_g2_hz = 0.001 }, { f_hz = 9000.0, psd_g2_hz = 0.001 }]\n")
     assert not preflight(load_profile(p), tv51110, settings).ok
+
+
+@pytest.mark.parametrize("f_hi,ok", [(43000.0, True), (44000.0, False)])
+def test_daq_band_check(f_hi, ok, tmp_path):
+    """USB-4431 at 96 kS/s without decimation: the band is the converter passband (43.5 kHz)."""
+    st = load_settings(daq="usb4431", sensor=TEST_SENSOR)
+    st = dataclasses.replace(st, daq=dataclasses.replace(st.daq, fs_io_hz=96000.0, decimation=1))
+    p = tmp_path / "hf.toml"
+    p.write_text(f"breakpoints = [{{ f_hz = 100.0, psd_g2_hz = 1e-6 }}, "
+                 f"{{ f_hz = {f_hi}, psd_g2_hz = 1e-6 }}]\n")
+    check = {c.name: c for c in preflight(load_profile(p), load_shaker("bk4809"), st).checks}
+    assert check["profile f_hi <= DAQ band"].ok == ok
 
 
 def test_runtime_monitor(settings, tv51110):

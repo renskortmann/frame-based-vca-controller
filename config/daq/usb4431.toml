@@ -39,3 +39,7 @@ antialias_filter = true        # delta-sigma ADC, alias-free to 0.49 fs
 ao_sync = "start_trigger"      # AO starts on ai/StartTrigger, both clocked from the same timebase
 ao_on_demand = false           # DSA AO is hardware-timed only
 filter_delay_samples = 102.0   # ADC filter delay 39 samples + DAC filter delay 63.3 samples (max)
+passband_fraction = 0.453      # AO flat to 0.453 fs (+/-0.4 dB), AI to 46.4 kHz at 102.4 kS/s
+# Highest test frequency (Settings.f_band_max_hz): 7.68 kHz with the settings above
+# (0.3 * fs_io_hz / decimation); with decimation = 1 it is 0.453 * fs_io_hz, at most 43.5 kHz
+# with fs_io_hz = 96000.
