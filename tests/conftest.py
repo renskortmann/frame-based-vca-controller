@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 from vcactl.config import load_shaker, load_settings
@@ -10,9 +12,17 @@ PROFILES = ROOT / "config" / "test_profiles"
 TEST_SENSOR = str(ROOT / "tests" / "data" / "sensor_test.toml")
 
 
+def pin_rates(settings, fs_io_hz=100000.0, decimation=4, frame_size=4096):
+    """Settings with a fixed DAQ rate and frame size (default: the USB-6211 values used before
+    the automatic selection), for tests that need exact numbers."""
+    return dataclasses.replace(
+        settings, daq=dataclasses.replace(settings.daq, fs_io_hz=fs_io_hz, decimation=decimation),
+        control=dataclasses.replace(settings.control, frame_size=frame_size))
+
+
 @pytest.fixture
 def settings():
-    return load_settings(sensor=TEST_SENSOR)
+    return pin_rates(load_settings(sensor=TEST_SENSOR))
 
 
 @pytest.fixture(params=["tv51110", "tv52110"])

@@ -15,8 +15,11 @@ ai_coupling = "AC"             # AC (-3 dB at 0.8 Hz) or DC; AC is required with
 iepe_current_ma = 0.0          # 0 (off), 4, 10 or 20
 ao_range_v = 10.0              # ranges: 10, 3.16, 1, 0.316 (attenuation 0 .. 30 dB)
 ao_terminal_config = "PSEUDO_DIFF"  # AO- tied to chassis via 50 ohm: suits a single-ended amplifier input
-fs_io_hz = 51200.0             # AI/AO rate, 100 S/s .. 200 kS/s
-decimation = 2                 # control rate = fs_io_hz / decimation (25.6 kHz)
+fs_io_hz = "auto"              # AI/AO rate: "auto" (the lowest of fs_io_auto_hz whose band
+                               # covers the profile) or a fixed rate, 100 S/s .. 200 kS/s
+fs_io_auto_hz = [1600.0, 3200.0, 6400.0, 12800.0, 25600.0, 51200.0, 102400.0, 200000.0]
+decimation = "auto"            # control rate = fs_io_hz / decimation; "auto" gives 1 (the
+                               # converters filter, so no FIR rate change is needed)
 ao_queue_blocks = 2            # half-frames queued ahead in the AO buffer (latency vs. underrun margin)
 
 [limits]
@@ -33,10 +36,14 @@ timebase_hz = 0.0
 antialias_filter = true        # delta-sigma ADC, alias-free to 0.454 fs
 ao_sync = "start_trigger"      # AO starts on ai/StartTrigger, both clocked from the same reference
 ao_on_demand = false           # DSA AO is hardware-timed only
-# AO output delay 75 samples at 50-60 kS/s (65 at <= 10 kS/s .. 106 at 200 kS/s); the AI digital
-# filter delay is compensated to 0 by the driver. Update this when fs_io_hz changes.
-filter_delay_samples = 75.0
+# AO output delay per rate (datasheet table; the AI digital filter delay is compensated to 0 by
+# the driver): filter_delay_by_rate[i] samples for fs_io_hz <= filter_delay_max_rate_hz[i], and
+# filter_delay_samples above the last rate (190-200 kS/s).
+filter_delay_max_rate_hz = [10000.0, 20000.0, 30000.0, 40000.0, 50000.0, 60000.0, 70000.0,
+                            80000.0, 90000.0, 100000.0, 110000.0, 120000.0, 130000.0, 140000.0,
+                            150000.0, 160000.0, 170000.0, 180000.0, 190000.0]
+filter_delay_by_rate = [65.0, 67.0, 69.0, 71.0, 73.0, 75.0, 77.0, 80.0, 82.0, 84.0, 85.0, 87.0,
+                        90.0, 92.0, 94.0, 97.0, 99.0, 101.0, 103.0]
+filter_delay_samples = 106.0
 passband_fraction = 0.454      # AI alias-free and AO passband: DC to 0.454 fs
-# Highest test frequency (Settings.f_band_max_hz): 7.68 kHz with the settings above
-# (0.3 * fs_io_hz / decimation); with decimation = 1 it is 0.454 * fs_io_hz, at most 90.8 kHz
-# with fs_io_hz = 200000 (then filter_delay_samples = 106).
+# Highest test frequency (0.454 * fs_io_hz without decimation): 90.8 kHz at 200 kS/s.

@@ -5,7 +5,7 @@ import pytest
 from vcactl.config import load_settings, load_shaker
 from vcactl.profile import load_profile
 from vcactl.safety import AiRange, AbortError, RuntimeMonitor, preflight, select_ai_range
-from conftest import PROFILES, TEST_SENSOR
+from conftest import PROFILES, TEST_SENSOR, pin_rates
 
 
 def test_bundled_profiles_pass(settings, shaker):
@@ -38,8 +38,7 @@ def test_band_beyond_shaker(settings, tv51110, tmp_path):
 @pytest.mark.parametrize("f_hi,ok", [(43000.0, True), (44000.0, False)])
 def test_daq_band_check(f_hi, ok, tmp_path):
     """USB-4431 at 96 kS/s without decimation: the band is the converter passband (43.5 kHz)."""
-    st = load_settings(daq="usb4431", sensor=TEST_SENSOR)
-    st = dataclasses.replace(st, daq=dataclasses.replace(st.daq, fs_io_hz=96000.0, decimation=1))
+    st = pin_rates(load_settings(daq="usb4431", sensor=TEST_SENSOR), 96000.0, 1, 16384)
     p = tmp_path / "hf.toml"
     p.write_text(f"breakpoints = [{{ f_hz = 100.0, psd_g2_hz = 1e-6 }}, "
                  f"{{ f_hz = {f_hi}, psd_g2_hz = 1e-6 }}]\n")
@@ -99,7 +98,7 @@ def test_stepped_sine_preflight_uses_highest_level(settings, tv51110, tmp_path):
 
 def test_sensor_range_and_band(tv51110, flat_profile, tmp_path):
     from vcactl.config import load_settings
-    st = load_settings()                       # PCB 356B18: +/-5 g, 0.5-3000 Hz
+    st = pin_rates(load_settings())            # PCB 356B18: +/-5 g, 0.5-3000 Hz
     failed = {c.name for c in preflight(flat_profile, tv51110, st).checks if not c.ok}
     assert failed == {"accel peak (4.5 s) <= sensor",            # 4.45 g rms * 4.5
                       "AI peak (+3 dB) <= range"}                # 21 V at 1048 mV/g > 10 V
@@ -150,7 +149,7 @@ def test_select_ai_range_auto():
 def test_ai_range_preflight_check(tv51110):
     import dataclasses
     from vcactl.config import load_settings
-    st = load_settings()
+    st = pin_rates(load_settings())
     low_g = load_profile(PROFILES / "low_g.toml")
     name = "AI peak (+3 dB) <= range"
     assert preflight(low_g, tv51110, st).ok                            # auto: 5 V

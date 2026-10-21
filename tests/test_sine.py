@@ -11,6 +11,7 @@ from vcactl.daq.sim import SimulatedDaq
 from vcactl.dsp.resample import design_lowpass
 from vcactl.logger import RunLogger
 from vcactl.profile import load_profile
+from vcactl.rates import resolve_rates
 from vcactl.sine import SINE_STATUS_FIELDS, SineController
 from conftest import PROFILES
 
@@ -22,6 +23,8 @@ def write_profile(tmp_path, body: str):
 
 
 def run(settings, shaker, profile, *, sim_kwargs=None, rows=None, sim_cls=SimulatedDaq, **kw):
+    if not settings.rates_resolved:
+        settings, _ = resolve_rates(profile, shaker, settings)
     backend = sim_cls(settings, shaker, seed=1, **(sim_kwargs or {}))
     ctl = SineController(settings, shaker, profile, backend, seed=2,
                          on_status=(rows.append if rows is not None else None), **kw)

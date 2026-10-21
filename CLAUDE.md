@@ -78,17 +78,30 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   `ai/SampleClock`.
 - USB-4431 and PXIe-4468 (DSA): delta-sigma with built-in anti-aliasing; AO runs on its own clock
   and starts on `ai/StartTrigger`; AO is hardware-timed only, so `force_zero` writes a short
-  finite burst of zeros. Their converter filter delay (`limits.filter_delay_samples`) is added to
-  the controller's drive/response alignment and is emulated by the simulator. For the PXIe-4468
-  this delay depends on the rate (datasheet table); update it if `fs_io_hz` changes.
-- Band limit (`Settings.f_band_max_hz`, pre-flight check `profile f_hi <= DAQ band`):
-  `limits.passband_fraction` x `fs_io_hz` (0.5 for the USB-6211, which has no converter
-  filter; 0.453 USB-4431; 0.454 PXIe-4468) and, with `decimation` > 1, 0.3 x control rate
-  (the FIR passband). Highest test frequency with the DAQ as the only limit: USB-6211 37.5 kHz
-  (250 kS/s, decimation 2), USB-4431 43.5 kHz (96 kS/s, decimation 1), PXIe-4468 90.8 kHz
-  (200 kS/s, decimation 1). Decimation 1 has run only in the simulator. The defaults stay at
-  about 7.5 kHz; the higher rates need a larger `frame_size` for a 20 Hz lower band edge
-  (README, DAQ devices).
+  finite burst of zeros. Their converter filter delay (`limits.filter_delay_at(fs_io_hz)`) is
+  added to the controller's drive/response alignment and is emulated by the simulator. For the
+  PXIe-4468 it depends on the rate: `filter_delay_max_rate_hz`/`filter_delay_by_rate` hold the
+  datasheet table, and `filter_delay_samples` applies above its last rate.
+- Rates and frame size are chosen per run by `rates.resolve_rates` (called by the CLI before the
+  backend is created; the controller and both backends refuse settings that are still "auto"):
+  - I/O rate: the lowest of `daq.fs_io_auto_hz` (USB-4431: `limits.fs_allowed_hz`) whose band
+    covers the profile's f_hi. Band (`config.daq_band_max_hz`, `Settings.f_band_max_hz`):
+    `limits.passband_fraction` x `fs_io_hz` (0.5 USB-6211, 0.453 USB-4431, 0.454 PXIe-4468)
+    and, with `decimation` > 1, 0.3 x control rate (the FIR passband).
+  - Decimation: 1 on the DSA devices; on the USB-6211 the largest factor from 2 to 16
+    (`MAX_DECIMATION`) with a whole-number control rate. The USB-6211 keeps fs_io >= 100 kS/s
+    (no anti-aliasing filter; the 356B18 resonance is >= 20 kHz).
+  - Frame size: the smallest power of two with df <= `control.line_spacing_hz` (6.25 Hz) and
+    <= f_lo / 2, so the loop timing in seconds (frames per level, pretest, averaging) stays as
+    tuned at every rate. This choice (lowest rate; df kept near 6 Hz) is the user's.
+  - Band mismatches (profile against the shaker, the sensor, the DAQ maximum and a fixed
+    frame size) are one ConfigError. Highest test frequency with the DAQ as the only limit:
+    USB-6211 37.5 kHz, USB-4431 43.5 kHz, PXIe-4468 90.8 kHz.
+  - Decimation 1 (now the DSA default) has run only in the simulator. Tests that need exact
+    numbers pin the old fixed rates with `conftest.pin_rates`.
+- The simulator discretizes the shaker model with a bilinear transform at fs_io. At low DSA
+  rates, resonances above about 0.4 fs_io are pushed below Nyquist (the TV 51110's 6.5 kHz
+  lands at about 2.1 kHz at 5 kS/s), whereas a real DSA filters them out.
 - AI range: `ai_range_v = "auto"` (default in all DAQ files) is resolved per run by
   `safety.select_ai_range` from the expected peak at `--level` (`expected_accel_peak_g` x
   `v_per_g`, + `ai_range_margin_db`). The controller passes it to `backend.start(prefill,

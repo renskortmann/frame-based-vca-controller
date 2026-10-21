@@ -39,6 +39,7 @@ class SimulatedDaq:
     def __init__(self, settings: Settings, shaker: ShakerConfig, *,
                  sensor: SensorConfig | None = None, realtime: bool = False,
                  seed: int | None = None, disconnect_after_s: float | None = None):
+        settings.require_rates("SimulatedDaq")
         self.fs_io = settings.daq.fs_io_hz
         self.ai_range = None           # set by start()
         self.ao_range = settings.daq.ao_range_v
@@ -47,7 +48,7 @@ class SimulatedDaq:
         self.v_per_g = settings.v_per_g
         self.sim = shaker.sim
         self.delay_samples = self.sim.io_delay_samples + round(
-            settings.daq.limits.filter_delay_samples)
+            settings.daq.limits.filter_delay_at(self.fs_io))
         self.sos = shaker_model_sos(shaker, settings.payload_total_kg, self.fs_io)
         self.zi = np.zeros((self.sos.shape[0], 2))
         self.rng = np.random.default_rng(seed)

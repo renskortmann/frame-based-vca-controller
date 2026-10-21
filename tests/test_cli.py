@@ -1,3 +1,5 @@
+import json
+
 from vcactl.cli import main
 from conftest import PROFILES, TEST_SENSOR
 
@@ -17,7 +19,28 @@ def test_run_sim(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0, out
     assert "result : completed" in out
-    assert len(list(tmp_path.iterdir())) == 1
+    (run_dir,) = tmp_path.iterdir()
+    meta = json.loads((run_dir / "meta.json").read_text())
+    for key in ("fs_io_hz", "decimation"):                   # the resolved values are logged
+        assert meta["rates"][key] == meta["settings"]["daq"][key] != "auto"
+    assert meta["rates"]["frame_size"] == meta["settings"]["control"]["frame_size"] != "auto"
+
+
+def test_check_prints_rates(capsys):
+    assert main(["check", "--shaker", "bk4809", "--profile", "low_g"]) == 0
+    assert ("rates  : I/O 100 kS/s, decimation 10, control 10 kS/s, frame 2048 (df 4.88 Hz), "
+            "band to 3 kHz (auto)") in capsys.readouterr().out
+
+
+def test_incompatible_profile_is_a_config_error(tmp_path, capsys):
+    p = tmp_path / "to5k.toml"
+    p.write_text("breakpoints = [{ f_hz = 20.0, psd_g2_hz = 1e-5 }, "
+                 "{ f_hz = 5000.0, psd_g2_hz = 1e-5 }]\n")
+    assert main(["check", "--shaker", "bk4809", "--profile", str(p)]) == 2   # PCB 356B18: 3 kHz
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "configuration error: the profile (20-5000 Hz) does not fit" in captured.err
+    assert "f_max 3000 Hz of the sensor (PCB 356B18" in captured.err
 
 
 def test_config_error_exit_code(capsys):

@@ -62,6 +62,7 @@ class NiDaq:
     def __init__(self, settings: Settings, block_io: int):
         import nidaqmx  # noqa: F401  (import errors surface here, not at module import)
 
+        settings.require_rates("NiDaq")
         self.cfg = settings.daq
         self.fs_io = settings.daq.fs_io_hz
         self.block_io = block_io

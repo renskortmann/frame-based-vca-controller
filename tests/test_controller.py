@@ -11,11 +11,14 @@ from vcactl.daq.base import DaqFault
 from vcactl.daq.sim import SimulatedDaq
 from vcactl.logger import RunLogger
 from vcactl.profile import load_profile
+from vcactl.rates import resolve_rates
 from conftest import PROFILES, TEST_SENSOR
 
 
 def run(settings, shaker, profile, *, duration=10.0, sim_kwargs=None, rows=None,
         pretest_only=False, **kw):
+    if not settings.rates_resolved:
+        settings, _ = resolve_rates(profile, shaker, settings)
     backend = SimulatedDaq(settings, shaker, seed=1, **(sim_kwargs or {}))
     ctl = Controller(settings, shaker, profile, backend, duration_s=duration, seed=2,
                      on_status=(rows.append if rows is not None else None), **kw)
@@ -167,11 +170,20 @@ def test_converges_without_decimation(tv51110, tmp_path):
     p = tmp_path / "band.toml"
     p.write_text("breakpoints = [{ f_hz = 20.0, psd_g2_hz = 0.005 }, "
                  "{ f_hz = 7000.0, psd_g2_hz = 0.005 }]\n")
-    assert settings.f_band_max_hz >= 7000.0 > 0.3 * 25600.0 / 2
     ctl, backend, res = run(settings, tv51110, load_profile(p))
+    assert ctl.settings.f_band_max_hz >= 7000.0 > 0.3 * 25600.0 / 2
     assert res.completed and res.state == State.DONE, res.reason
     assert abs(res.rms_err_db) < 0.5
     assert_safe_stop(tv51110, backend)
+
+
+def test_unresolved_rates_rejected(tv51110, flat_profile):
+    settings = load_settings(sensor=TEST_SENSOR)           # fs_io_hz etc. "auto"
+    with pytest.raises(ValueError, match="resolve_rates"):
+        SimulatedDaq(settings, tv51110)
+    resolved, _ = resolve_rates(flat_profile, tv51110, settings)
+    with pytest.raises(ValueError, match="resolve_rates"):
+        Controller(settings, tv51110, flat_profile, SimulatedDaq(resolved, tv51110))
 
 
 def test_low_g_run_with_pcb356b18():

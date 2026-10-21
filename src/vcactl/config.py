@@ -73,7 +73,19 @@ class DaqLimits:
                                           # "start_trigger": AO starts on ai/StartTrigger
     ao_on_demand: bool                    # AO supports software-timed (on-demand) writes
     filter_delay_samples: float           # AO + AI converter filter delay in fs_io samples
+                                          # (above the last rate of the table below)
     passband_fraction: float              # converter passband (AI and AO) as a fraction of fs_io
+    # rate-dependent delay (PXIe-4468): filter_delay_by_rate[i] samples for
+    # fs_io_hz <= filter_delay_max_rate_hz[i]; empty: filter_delay_samples at every rate
+    filter_delay_max_rate_hz: tuple[float, ...] = ()
+    filter_delay_by_rate: tuple[float, ...] = ()
+
+    def filter_delay_at(self, fs_io_hz: float) -> float:
+        """Converter filter delay in samples at the I/O rate ``fs_io_hz``."""
+        for f_max, delay in zip(self.filter_delay_max_rate_hz, self.filter_delay_by_rate):
+            if fs_io_hz <= f_max:
+                return delay
+        return self.filter_delay_samples
 
 
 @dataclass(frozen=True)
@@ -89,8 +101,9 @@ class DaqConfig:
     iepe_current_ma: float = 0.0
     ao_range_v: float = 10.0
     ao_terminal_config: str = ""          # empty: driver default
-    fs_io_hz: float = 100000.0
-    decimation: int = 4
+    fs_io_hz: Union[float, str] = "auto"  # "auto": chosen per run (see vcactl.rates)
+    fs_io_auto_hz: tuple[float, ...] = ()   # rates "auto" chooses from (default: limits.fs_allowed_hz)
+    decimation: Union[int, str] = "auto"
     ao_queue_blocks: int = 2
     conditioner_gain: float = 1.0         # gain of an external IEPE conditioner between sensor and AI
 
@@ -110,7 +123,8 @@ class SensorConfig:
 
 @dataclass(frozen=True)
 class ControlConfig:
-    frame_size: int = 4096
+    frame_size: Union[int, str] = "auto"  # "auto": chosen per run (see vcactl.rates)
+    line_spacing_hz: float = 6.25         # auto frame size: the largest line spacing
     dof: int = 120
     control_dof: int = 32
     frf_averages: int = 32
@@ -168,18 +182,26 @@ class Settings:
     pretest: PretestConfig = field(default_factory=PretestConfig)
 
     @property
+    def rates_resolved(self) -> bool:
+        """False while daq.fs_io_hz, daq.decimation or control.frame_size is "auto"."""
+        return not any(isinstance(v, str) for v in
+                       (self.daq.fs_io_hz, self.daq.decimation, self.control.frame_size))
+
+    def require_rates(self, who: str) -> None:
+        if not self.rates_resolved:
+            raise ValueError(f"{who}: daq.fs_io_hz, daq.decimation or control.frame_size is "
+                             "\"auto\"; resolve them first with vcactl.rates.resolve_rates")
+
+    @property
     def fs_control_hz(self) -> float:
+        self.require_rates("Settings.fs_control_hz")
         return self.daq.fs_io_hz / self.daq.decimation
 
     @property
     def f_band_max_hz(self) -> float:
-        """Highest test frequency the DAQ allows: the converter passband
-        (``limits.passband_fraction * fs_io_hz``) and, with decimation, the passband of the
-        rate-change FIR (0.6 x control Nyquist)."""
-        f = self.daq.limits.passband_fraction * self.daq.fs_io_hz
-        if self.daq.decimation > 1:
-            f = min(f, 0.3 * self.fs_control_hz)
-        return f
+        """Highest test frequency at the DAQ rates of these settings (``daq_band_max_hz``)."""
+        self.require_rates("Settings.f_band_max_hz")
+        return daq_band_max_hz(self.daq.limits, self.daq.fs_io_hz, self.daq.decimation)
 
     @property
     def v_per_g(self) -> float:
@@ -190,6 +212,16 @@ class Settings:
     def payload_total_kg(self) -> float:
         """Mass on the armature: fixture and specimen plus the control sensor."""
         return self.safety.payload_kg + self.sensor.mass_kg
+
+
+def daq_band_max_hz(limits: DaqLimits, fs_io_hz: float, decimation: int) -> float:
+    """Highest test frequency at an I/O rate and decimation: the converter passband
+    (``limits.passband_fraction * fs_io_hz``) and, with decimation, the passband of the
+    rate-change FIR (0.6 x control Nyquist)."""
+    f = limits.passband_fraction * fs_io_hz
+    if decimation > 1:
+        f = min(f, 0.3 * fs_io_hz / decimation)
+    return f
 
 
 def build_dataclass(cls, table: dict, where: str):
@@ -223,10 +255,13 @@ def build_dataclass(cls, table: dict, where: str):
             else:
                 raise ConfigError(f"{where}.{f.name}: expected a list of {item.__name__}, "
                                   f"got {value!r}")
-        elif typ == Union[float, str]:
-            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-                raise ConfigError(f"{where}.{f.name}: expected a number or a string, got {value!r}")
-            value = value if isinstance(value, str) else float(value)
+        elif typ in (Union[float, str], Union[int, str]):
+            number = float if typ == Union[float, str] else int
+            numbers = (int, float) if number is float else (int,)
+            if isinstance(value, bool) or not isinstance(value, (*numbers, str)):
+                kind = "a number" if number is float else "an integer"
+                raise ConfigError(f"{where}.{f.name}: expected {kind} or a string, got {value!r}")
+            value = value if isinstance(value, str) else number(value)
         elif typ is bool:
             if not isinstance(value, bool):
                 raise ConfigError(f"{where}.{f.name}: expected true or false, got {value!r}")
@@ -320,6 +355,22 @@ def _fmt(values) -> str:
     return ", ".join(f"{v:g}" if isinstance(v, float) else str(v) for v in values)
 
 
+def _check_rate(d: DaqConfig, fs: float, name: str, where: str) -> None:
+    """``fs`` must be a rate the device runs AI and AO at."""
+    lim = d.limits
+    if not lim.fs_min_hz <= fs <= lim.fs_max_hz:
+        raise ConfigError(f"{where}: {name} must be in [{lim.fs_min_hz:g}, {lim.fs_max_hz:g}] "
+                          f"({d.model}), got {fs:g}")
+    if lim.fs_allowed_hz and not _one_of(fs, lim.fs_allowed_hz):
+        raise ConfigError(f"{where}: {name} must be one of {_fmt(lim.fs_allowed_hz)} "
+                          f"({d.model}), got {fs:g}")
+    if lim.timebase_hz > 0:
+        n = lim.timebase_hz / fs
+        if abs(n - round(n)) > 1e-9 * n:
+            raise ConfigError(f"{where}: {name} must divide {lim.timebase_hz:g} exactly "
+                              f"({d.model}), got {fs:g}")
+
+
 def validate_daq(d: DaqConfig, where: str = "daq") -> None:
     lim = d.limits
     if lim.ao_sync not in ("sample_clock", "start_trigger"):
@@ -350,26 +401,33 @@ def validate_daq(d: DaqConfig, where: str = "daq") -> None:
     if d.iepe_current_ma > 0 and d.ai_coupling.upper() != "AC":
         raise ConfigError(f"{where}: daq.ai_coupling must be AC when IEPE excitation is on "
                           "(the sensor bias voltage would use up the AI range)")
-    if not lim.fs_min_hz <= d.fs_io_hz <= lim.fs_max_hz:
-        raise ConfigError(f"{where}: daq.fs_io_hz must be in [{lim.fs_min_hz:g}, "
-                          f"{lim.fs_max_hz:g}] ({d.model})")
-    if lim.fs_allowed_hz and not _one_of(d.fs_io_hz, lim.fs_allowed_hz):
-        raise ConfigError(f"{where}: daq.fs_io_hz must be one of {_fmt(lim.fs_allowed_hz)} "
-                          f"({d.model})")
-    if lim.timebase_hz > 0:
-        n = lim.timebase_hz / d.fs_io_hz
-        if abs(n - round(n)) > 1e-9 * n:
-            raise ConfigError(f"{where}: daq.fs_io_hz must divide {lim.timebase_hz:g} exactly "
+    if isinstance(d.fs_io_hz, str):
+        if d.fs_io_hz != "auto":
+            raise ConfigError(f"{where}: daq.fs_io_hz must be \"auto\" or a rate in S/s "
                               f"({d.model})")
-    if d.decimation < 1:
-        raise ConfigError(f"{where}: daq.decimation must be >= 1")
-    if not 0 < lim.passband_fraction <= 0.5:
-        raise ConfigError(f"{where}: limits.passband_fraction must be in (0, 0.5]")
-    if d.conditioner_gain <= 0:
-        raise ConfigError(f"{where}: daq.conditioner_gain must be > 0")
-    if not lim.antialias_filter and d.decimation < 2:
+        if not (d.fs_io_auto_hz or lim.fs_allowed_hz):
+            raise ConfigError(f"{where}: daq.fs_io_hz = \"auto\" needs daq.fs_io_auto_hz, the "
+                              f"rates to choose from ({d.model})")
+    else:
+        _check_rate(d, d.fs_io_hz, "daq.fs_io_hz", where)
+    for fs in d.fs_io_auto_hz:
+        _check_rate(d, fs, "daq.fs_io_auto_hz", where)
+    if isinstance(d.decimation, str):
+        if d.decimation != "auto":
+            raise ConfigError(f"{where}: daq.decimation must be \"auto\" or an integer >= 1")
+    elif d.decimation < 1:
+        raise ConfigError(f"{where}: daq.decimation must be \"auto\" or an integer >= 1")
+    elif not lim.antialias_filter and d.decimation < 2:
         raise ConfigError(f"{where}: daq.decimation must be >= 2: the {d.model} has no "
                           "anti-aliasing filter, so AI must be oversampled and filtered digitally")
+    if not 0 < lim.passband_fraction <= 0.5:
+        raise ConfigError(f"{where}: limits.passband_fraction must be in (0, 0.5]")
+    rates = list(lim.filter_delay_max_rate_hz)
+    if len(rates) != len(lim.filter_delay_by_rate) or rates != sorted(rates):
+        raise ConfigError(f"{where}: limits.filter_delay_max_rate_hz must be ascending and as "
+                          "long as limits.filter_delay_by_rate")
+    if d.conditioner_gain <= 0:
+        raise ConfigError(f"{where}: daq.conditioner_gain must be > 0")
 
 
 def validate_sensor(sn: SensorConfig, where: str = "sensor") -> None:
@@ -388,8 +446,15 @@ def validate_settings(cfg: Settings, where: str = "settings") -> None:
     validate_daq(d, where)
     if d.ao_queue_blocks < 1:
         raise ConfigError(f"{where}: daq.ao_queue_blocks must be >= 1")
-    if c.frame_size < 256 or c.frame_size % 2:
-        raise ConfigError(f"{where}: control.frame_size must be even and >= 256")
+    if isinstance(c.frame_size, str):
+        frame_ok = c.frame_size == "auto"
+    else:
+        frame_ok = c.frame_size >= 256 and c.frame_size % 2 == 0
+    if not frame_ok:
+        raise ConfigError(f"{where}: control.frame_size must be \"auto\" or an even number "
+                          ">= 256")
+    if c.line_spacing_hz <= 0:
+        raise ConfigError(f"{where}: control.line_spacing_hz must be > 0")
     if not 0 < c.correction_gain <= 1:
         raise ConfigError(f"{where}: control.correction_gain must be in (0, 1]")
     if c.dof < 2 or c.control_dof < 2 or c.frf_averages < 1:

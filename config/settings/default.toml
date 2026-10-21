@@ -8,7 +8,11 @@
 # device = "Dev2"
 
 [control]
-frame_size = 4096              # samples per frame at the control rate (df = fs / frame_size)
+frame_size = "auto"            # samples per frame at the control rate (df = fs / frame_size):
+                               # "auto" (the smallest power of two with df <= line_spacing_hz and
+                               # df <= f_lo / 2) or a fixed even number >= 256
+line_spacing_hz = 6.25         # largest df for "auto": keeps a frame at >= 160 ms at every rate,
+                               # so the loop timing (frames per level, pretest) stays the same
 dof = 120                      # statistical degrees of freedom of the displayed/checked PSD
 control_dof = 32               # degrees of freedom of the PSD used for drive correction
 frf_averages = 32              # averages for the FRF (H1) estimate

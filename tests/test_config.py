@@ -3,6 +3,7 @@ import dataclasses
 import pytest
 
 from vcactl.config import ConfigError, load_shaker, load_settings, validate_setup, validate_settings
+from conftest import pin_rates
 
 
 def test_bundled_configs_load(settings):
@@ -31,6 +32,11 @@ def test_wrong_type_rejected(tmp_path):
     ("daq", "ai_range_v", "max"),
     ("safety", "ai_range_margin_db", -1.0),
     ("daq", "fs_io_hz", 300000.0),
+    ("daq", "fs_io_hz", "fast"),
+    ("daq", "decimation", "max"),
+    ("control", "frame_size", "big"),
+    ("control", "frame_size", 1001),
+    ("control", "line_spacing_hz", 0.0),
     ("daq", "ai_terminal_config", "XYZ"),
     ("control", "correction_gain", 0.0),
     ("sensor", "sensitivity_mv_per_g", 0.0),
@@ -98,24 +104,21 @@ def test_daq_profiles_load(daq, shaker):
 
 def test_dsa_profiles():
     usb4431, pxie4468 = load_settings(daq="usb4431").daq, load_settings(daq="pxie4468").daq
-    assert usb4431.ao_range_v == 3.5 and usb4431.fs_io_hz == 51200
+    assert usb4431.ao_range_v == 3.5 and usb4431.fs_io_hz == usb4431.decimation == "auto"
     assert pxie4468.limits.ai_ranges_v[0] == 0.316 and pxie4468.limits.fs_max_hz == 200000
 
 
 @pytest.mark.parametrize("daq,fs_io_hz,decimation,f_max", [
-    ("usb6211", None, None, 7500.0),          # defaults: 0.6 x control Nyquist
-    ("usb4431", None, None, 7680.0),
-    ("pxie4468", None, None, 7680.0),
+    ("usb6211", 100000.0, 4, 7500.0),         # with decimation: 0.6 x control Nyquist
+    ("usb4431", 51200.0, 2, 7680.0),
+    ("pxie4468", 51200.0, 2, 7680.0),
     ("usb6211", 250000.0, 2, 37500.0),        # highest rate, lowest decimation
     ("usb4431", 96000.0, 1, 0.453 * 96000),   # decimation 1: converter passband
     ("pxie4468", 200000.0, 1, 0.454 * 200000),
 ])
 def test_daq_band_limit(daq, fs_io_hz, decimation, f_max):
-    st = load_settings(daq=daq)
-    if fs_io_hz:
-        st = dataclasses.replace(st, daq=dataclasses.replace(st.daq, fs_io_hz=fs_io_hz,
-                                                             decimation=decimation))
-        validate_settings(st)
+    st = pin_rates(load_settings(daq=daq), fs_io_hz, decimation)
+    validate_settings(st)
     assert st.f_band_max_hz == pytest.approx(f_max)
 
 
@@ -274,4 +277,15 @@ def test_ai_range_number_from_toml(tmp_path):
     assert load_settings(p).daq.ai_range_v == 1.0
     p.write_text("[daq]\nai_range_v = true\n")
     with pytest.raises(ConfigError, match="ai_range_v"):
+        load_settings(p)
+
+
+def test_rates_from_toml(tmp_path):
+    p = tmp_path / "settings.toml"
+    p.write_text("[daq]\nfs_io_hz = 50000\ndecimation = 2\n[control]\nframe_size = 2048\n")
+    st = load_settings(p)
+    assert (st.daq.fs_io_hz, st.daq.decimation, st.control.frame_size) == (50000.0, 2, 2048)
+    assert st.rates_resolved and st.fs_control_hz == 25000
+    p.write_text("[daq]\ndecimation = 2.5\n")
+    with pytest.raises(ConfigError, match="decimation"):
         load_settings(p)

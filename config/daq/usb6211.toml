@@ -9,8 +9,15 @@ ai_channel = "ai1"             # <- IEPE conditioner output (or charge amplifier
 ai_terminal_config = "DIFF"    # DIFF (AI1+/AI9-), RSE or NRSE
 ai_range_v = "auto"            # "auto" (smallest range for the expected peak) or 0.2, 1, 5, 10
 ao_range_v = 10.0              # fixed +/-10 V
-fs_io_hz = 100000.0            # AI/AO rate; 20 MHz / fs_io_hz must be an integer
-decimation = 4                 # control rate = fs_io_hz / decimation (25 kHz)
+fs_io_hz = "auto"              # AI/AO rate: "auto" (the lowest of fs_io_auto_hz whose band
+                               # covers the profile) or a fixed rate (20 MHz / fs_io_hz an integer)
+# Rates for "auto". There is no anti-aliasing filter, so AI is oversampled at >= 100 kS/s:
+# response content up to 50 kHz (the PCB 356B18 resonance is >= 20 kHz) is then removed by the
+# decimation FIR instead of folding into the band. The higher rates are used only for bands
+# above 15 kHz; remove them if the PC cannot keep up.
+fs_io_auto_hz = [100000.0, 125000.0, 200000.0, 250000.0]
+decimation = "auto"            # control rate = fs_io_hz / decimation; "auto": the largest factor
+                               # from 2 to 16 (whole-number control rate) that covers the profile
 ao_queue_blocks = 2            # half-frames queued ahead in the AO buffer (latency vs. underrun margin)
 conditioner_gain = 1.0         # gain of the external IEPE conditioner (sensor mV/g * gain at AI);
                                # keep 1 with the 1000 mV/g PCB 356B18
@@ -31,7 +38,6 @@ ao_sync = "sample_clock"       # AO is clocked from ai/SampleClock
 ao_on_demand = true
 filter_delay_samples = 0.0     # SAR ADC and R-2R DAC: no converter filter delay
 passband_fraction = 0.5        # no converter filter (Nyquist only); the decimation FIR sets the band
-# Highest test frequency (Settings.f_band_max_hz = 0.3 * fs_io_hz / decimation): 7.5 kHz with
-# the settings above; at most 37.5 kHz with fs_io_hz = 250000 and decimation = 2. Without an
-# analog anti-aliasing filter, response content near fs_io_hz folds into the band, and the AO
-# images near fs_io_hz are only attenuated by the zero-order hold.
+# Highest test frequency (0.3 * fs_io_hz / decimation): 37.5 kHz at 250 kS/s, decimation 2.
+# Without an analog anti-aliasing filter, response content near fs_io_hz folds into the band,
+# and the AO images near fs_io_hz are only attenuated by the zero-order hold.

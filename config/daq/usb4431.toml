@@ -17,8 +17,10 @@ ai_range_v = "auto"            # fixed +/-10 V ("auto" always gives 10)
 ai_coupling = "AC"             # AC (-3 dB at 0.8 Hz) or DC; AC is required with IEPE
 iepe_current_ma = 0.0          # 0 (off) or 2.1
 ao_range_v = 3.5               # fixed +/-3.5 V
-fs_io_hz = 51200.0             # AI/AO rate; must be an AO update rate (see fs_allowed_hz)
-decimation = 2                 # control rate = fs_io_hz / decimation (25.6 kHz)
+fs_io_hz = "auto"              # AI/AO rate: "auto" (the lowest AO update rate whose band covers
+                               # the profile) or a fixed AO update rate (see fs_allowed_hz)
+decimation = "auto"            # control rate = fs_io_hz / decimation; "auto" gives 1 (the
+                               # converters filter, so no FIR rate change is needed)
 ao_queue_blocks = 2            # half-frames queued ahead in the AO buffer (latency vs. underrun margin)
 
 [limits]
@@ -40,6 +42,4 @@ ao_sync = "start_trigger"      # AO starts on ai/StartTrigger, both clocked from
 ao_on_demand = false           # DSA AO is hardware-timed only
 filter_delay_samples = 102.0   # ADC filter delay 39 samples + DAC filter delay 63.3 samples (max)
 passband_fraction = 0.453      # AO flat to 0.453 fs (+/-0.4 dB), AI to 46.4 kHz at 102.4 kS/s
-# Highest test frequency (Settings.f_band_max_hz): 7.68 kHz with the settings above
-# (0.3 * fs_io_hz / decimation); with decimation = 1 it is 0.453 * fs_io_hz, at most 43.5 kHz
-# with fs_io_hz = 96000.
+# Highest test frequency (0.453 * fs_io_hz without decimation): 43.5 kHz at 96 kS/s.

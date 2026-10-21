@@ -121,6 +121,7 @@ class ControllerBase:
                  on_status: Callable[[dict], None] | None = None,
                  ai_range_v: float | str | None = None):
         validate_setup(settings, shaker)
+        settings.require_rates(type(self).__name__)
         self.settings, self.shaker, self.profile = settings, shaker, profile
         self.backend, self.logger, self.on_status = backend, logger, on_status
         c, d = settings.control, settings.daq
@@ -146,7 +147,7 @@ class ControllerBase:
         self.decim = Decimator(taps, self.R)
         # drive -> response delay: FIR resampling plus the DAQ's converter filters (DSA devices)
         self.delay = (total_delay_control_samples(taps, self.R)
-                      + round(d.limits.filter_delay_samples / self.R))
+                      + round(d.limits.filter_delay_at(d.fs_io_hz) / self.R))
 
         self.gen = RandomDriveGenerator(self.N, self.fs, np.random.default_rng(seed))
         self.hist_cap = cap = 4 * self.N + self.delay + (self.P + 2) * self.half

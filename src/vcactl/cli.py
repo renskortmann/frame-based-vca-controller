@@ -16,6 +16,7 @@ from .config import (DEFAULT_CONFIG_DIR, ConfigError, load_shaker, load_settings
 from .controller import Controller, State
 from .logger import STATUS_FIELDS, RunLogger
 from .profile import SineProfile, load_profile
+from .rates import resolve_rates
 from .safety import preflight, select_ai_range
 from .sine import SINE_STATUS_FIELDS, SineController
 
@@ -167,10 +168,11 @@ def _ai_range_override(args, settings):
     return v
 
 
-def cmd_check(args, settings, shaker, profile) -> int:
+def cmd_check(args, settings, shaker, profile, rates) -> int:
     ai = select_ai_range(profile, settings, args.level, args.ai_range)
     report = preflight(profile, shaker, settings, args.level, ai)
     print(f"shaker : {shaker.name}\ndaq    : {settings.daq.model}, AI range {ai.format()}\n"
+          f"rates  : {rates.format()}\n"
           f"sensor : {_sensor_text(settings)}\n"
           f"profile: {_profile_text(profile, args.level)}\n")
     print(report.format())
@@ -178,10 +180,10 @@ def cmd_check(args, settings, shaker, profile) -> int:
     return 0 if report.ok else 2
 
 
-def cmd_run(args, settings, shaker, profile, pretest_only: bool) -> int:
+def cmd_run(args, settings, shaker, profile, rates, pretest_only: bool) -> int:
     ai = select_ai_range(profile, settings, args.level, args.ai_range)
     report = preflight(profile, shaker, settings, args.level, ai)
-    print(f"AI range: {ai.format()}\n")
+    print(f"rates   : {rates.format()}\nAI range: {ai.format()}\n")
     print(report.format())
     if not report.ok:
         print("\npre-flight check FAILED; nothing was output")
@@ -211,8 +213,9 @@ def cmd_run(args, settings, shaker, profile, pretest_only: bool) -> int:
                           logger=logger, seed=args.seed, ai_range_v=args.ai_range,
                           on_status=lambda row: _print_status(row, last))
     logger.meta({"version": __version__, "shaker": shaker, "settings": settings,
-                 "profile": profile, "level_db": args.level, "ai_range": ai, "sim": args.sim,
-                 "pretest_only": pretest_only, "started": time.strftime("%Y-%m-%dT%H:%M:%S")})
+                 "profile": profile, "level_db": args.level, "ai_range": ai, "rates": rates,
+                 "sim": args.sim, "pretest_only": pretest_only,
+                 "started": time.strftime("%Y-%m-%dT%H:%M:%S")})
 
     def request_stop(signum, frame):
         if ctl.stop_requested:          # second Ctrl-C: stop immediately (AO forced to 0 V)
@@ -262,10 +265,11 @@ def main(argv=None) -> int:
         shaker = load_shaker(args.shaker, args.config_dir)
         profile = load_profile(resolve_config_path(args.profile, "test_profiles", args.config_dir))
         validate_setup(settings, shaker)
+        settings, rates = resolve_rates(profile, shaker, settings)
         args.ai_range = _ai_range_override(args, settings)
     except ConfigError as exc:
         print(f"configuration error: {exc}", file=sys.stderr)
         return 2
     if args.cmd == "check":
-        return cmd_check(args, settings, shaker, profile)
-    return cmd_run(args, settings, shaker, profile, pretest_only=args.cmd == "pretest")
+        return cmd_check(args, settings, shaker, profile, rates)
+    return cmd_run(args, settings, shaker, profile, rates, pretest_only=args.cmd == "pretest")

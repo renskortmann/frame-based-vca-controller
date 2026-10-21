@@ -81,6 +81,10 @@ Cross-file rules:
 - `pretest.drive_rms_v` must be within `shaker.max_drive_rms_v`.
 - If IEPE is enabled (`daq.iepe_current_ma > 0`), `ai_coupling` must be AC and the current must
   be within the sensor's IEPE range.
+- The profile band must lie within the shaker's and the sensor's frequency ranges and below the
+  DAQ's highest test frequency (see [DAQ devices](#daq-devices---daq)). This is checked per
+  run, before the pre-flight check: one `configuration error` lists every component that
+  limits the band.
 
 The third-party datasheets and manuals (shakers, amplifiers, DAQs, sensors) are not in this
 repository. They are in the project's Nextcloud folder (`CSAA04 HF Shakers (Alessandro)`):
@@ -128,37 +132,51 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
 |---|---|---|---|---|
 | `usb6211` | 0.2, 1, 5, 10 | 10 | 20 MHz / n, ≤ 250 kS/s | no anti-aliasing filter: `decimation` ≥ 2 |
 | `usb4431` | 10 | 3.5 | 51.2 k, 80 k, 96 k ÷ 2ⁿ | IEPE 2.1 mA; shaker `max_drive_v` ≤ 3.5 |
-| `pxie4468` | 0.316 … 42.4 | 0.316, 1, 3.16, 10 | 100 S/s – 200 kS/s | IEPE 4/10/20 mA; `filter_delay_samples` depends on the rate |
+| `pxie4468` | 0.316 … 42.4 | 0.316, 1, 3.16, 10 | 100 S/s – 200 kS/s | IEPE 4/10/20 mA; the AO delay depends on the rate |
 
 - `conditioner_gain` (default 1) is the gain of an external IEPE conditioner between the sensor
   and AI (USB-6211).
-- `daq.fs_io_hz` must be a rate the device supports.
-- **Highest test frequency.** The pre-flight check `profile f_hi <= DAQ band` limits the
-  profile to the converter passband, `limits.passband_fraction` × `fs_io_hz`, and, with
-  `decimation` > 1, to the passband of the rate-change FIR filter, 0.6 × control Nyquist
-  (0.3 × `fs_io_hz` / `decimation`). The sine pretest band is clipped to the same limit. If the
-  DAQ were the only limit (shaker, amplifier, sensor and PC infinitely fast):
+- **Rates.** `fs_io_hz` and `decimation` are `"auto"` in every DAQ file: each run chooses them
+  from the profile band, and `check`, `pretest` and `run` print the choice on the `rates` line.
+  The I/O rate is the lowest of `daq.fs_io_auto_hz` (USB-4431: its AO update rates) whose band
+  covers the profile's f_hi. The band is the converter passband, `limits.passband_fraction` ×
+  `fs_io_hz`, and, with `decimation` > 1, the passband of the rate-change FIR filter,
+  0.6 × control Nyquist (0.3 × `fs_io_hz` / `decimation`). The pre-flight row
+  `profile f_hi <= DAQ band` shows it. The decimation is 1 on the USB-4431 and PXIe-4468
+  (their converters filter). On the USB-6211 it is the largest factor from 2 to 16 that still
+  covers the band and gives a whole-number control rate. A number in `fs_io_hz` or
+  `decimation` (in the DAQ file, or in `[daq]` of the settings file) fixes that value, and the
+  other one is chosen around it.
 
-  | `--daq` | Default settings | Highest test frequency | Settings for it |
+  | `--daq` | `fs_io_auto_hz` | `low_g` (20–3000 Hz) gets | Highest test frequency |
   |---|---|---|---|
-  | `usb6211` | 7.5 kHz | 37.5 kHz | `fs_io_hz = 250000`, `decimation = 2` |
-  | `usb4431` | 7.68 kHz | 43.5 kHz | `fs_io_hz = 96000`, `decimation = 1` |
-  | `pxie4468` | 7.68 kHz | 90.8 kHz | `fs_io_hz = 200000`, `decimation = 1`, `filter_delay_samples = 106` |
+  | `usb6211` | 100, 125, 200, 250 kS/s | 100 kS/s, decimation 10 (10 kS/s control) | 37.5 kHz (250 kS/s, decimation 2) |
+  | `usb4431` | the AO update rates, 1.25–96 kS/s | 10 kS/s, decimation 1 | 43.5 kHz (96 kS/s) |
+  | `pxie4468` | 1.6, 3.2, … 102.4, 200 kS/s | 12.8 kS/s, decimation 1 | 90.8 kHz (200 kS/s) |
 
-  - USB-6211: the FIR filter sets the band, since `decimation` must be ≥ 2. The device has no
-    analog anti-aliasing or reconstruction filter. Response content near `fs_io_hz` folds into
-    the band, and the AO images near `fs_io_hz` are only about 15 dB below the drive at
-    37.5 kHz. At 250 kS/s the 4,095-sample AI FIFO lasts 16 ms, and the rates need a
-    Hi-Speed USB connection.
+  - USB-6211: there is no analog anti-aliasing or reconstruction filter, so AI stays oversampled
+    at ≥ 100 kS/s and only the decimation lowers the control rate. Response content up to
+    50 kHz (the PCB 356B18 resonance is ≥ 20 kHz) is then removed by the decimation FIR instead
+    of folding into the band. The higher rates are used only for bands above 15 kHz. Near
+    37.5 kHz the AO images near `fs_io_hz` are only about 15 dB below the drive. At 250 kS/s
+    the 4,095-sample AI FIFO lasts 16 ms, and the rates need a Hi-Speed USB connection; remove
+    rates from `fs_io_auto_hz` if the PC cannot keep up.
   - USB-4431 and PXIe-4468: the built-in converter filters are alias-free up to 0.453 fs and
-    0.454 fs. With `decimation = 1` there is no FIR filter, so the converter passband is
-    the limit. The USB-4431 rate must be an AO update rate (96 kS/s is the highest).
+    0.454 fs. At low rates the AI sees only the test band, so response outside it is not
+    monitored (as in commercial controllers).
   - PXIe-4468: the AO delay depends on the rate (65 samples at ≤ 10 kS/s up to 106 at
-    200 kS/s, datasheet table). Update `filter_delay_samples` with `fs_io_hz`.
-  - The line spacing grows with the control rate (Δf = control rate / `frame_size`), and the
-    profile must start at ≥ 2 Δf. With the default `[control] frame_size = 4096` the rates above
-    give f_lo ≥ 61 Hz (USB-6211), 47 Hz (USB-4431) or 98 Hz (PXIe-4468). For a 20 Hz start, use
-    `frame_size = 16384` (USB-6211, USB-4431) or `32768` (PXIe-4468).
+    200 kS/s). `limits.filter_delay_max_rate_hz` and `filter_delay_by_rate` hold the datasheet
+    table.
+- **Frame size.** `[control] frame_size = "auto"` (the default) is the smallest power of two
+  with a line spacing Δf = control rate / `frame_size` of at most `control.line_spacing_hz`
+  (6.25 Hz) and at most f_lo / 2 (the profile starts at ≥ 2 lines). A frame then lasts
+  160–320 ms at every rate, so the loop timing stays the same: frames per level, pretest
+  frames, averaging and the abort reaction. A low f_lo needs finer lines and longer frames. A
+  fixed `frame_size` is checked instead: if f_lo is below 2 lines at the lowest suitable rate,
+  the run stops with a configuration error.
+- **Mismatches.** Before the pre-flight check, the profile band is compared with the shaker's
+  and the sensor's frequency ranges, the DAQ's highest test frequency and a fixed frame size.
+  Every mismatch is listed in one `configuration error`, and nothing is output.
 - Underflow errors (-200621/-200290) on a slow or busy PC: increase `daq.ao_queue_blocks`.
   This adds latency.
 - **AI range.** `daq.ai_range_v = "auto"` (the default) picks, per run, the smallest range of
@@ -254,6 +272,8 @@ Tuning notes:
   smoother but slower equalization.
 - `sine.correction_gain` (default 0.15) above about 0.25 overshoots after a sudden change of
   the specimen; lower it for slower, smoother sine control.
+- `control.frame_size` and `control.line_spacing_hz` set the frequency resolution; the frame
+  size follows the DAQ rate (see [DAQ devices](#daq-devices---daq)).
 
 ### Test profiles (`--profile`)
 
@@ -396,7 +416,9 @@ Recommended first test on hardware:
   range. The force check is the dynamic payload limit; each shaker file lists it for a few
   acceleration levels. Also checked: the acceleration peak (4.5 × rms for random profiles)
   against the sensor range, the band against the sensor's frequency range, and the expected
-  AI peak (+ 3 dB) against the AI range.
+  AI peak (+ 3 dB) against the AI range. A band outside the shaker's or the sensor's frequency
+  range or above the DAQ's highest test frequency stops the run earlier, with a
+  `configuration error`.
 - **Runtime aborts:**
   - AI overload;
   - sensor over range (measured peak above the sensor file's `range_g_pk`);
@@ -407,7 +429,7 @@ Recommended first test on hardware:
   - any DAQmx error or warning (e.g. underflow, potential glitch).
 
   Every abort ends with ramp-down, 0 V and the tasks cleared. The drive already queued
-  (`ao_queue_blocks` + 1 half-frames, about 250 ms) still plays out before the ramp-down.
+  (`ao_queue_blocks` + 1 half-frames, about 250–500 ms) still plays out before the ramp-down.
   A DAQ fault stops immediately and writes 0 V.
 - **Sine aborts:** response peak over the shaker's sine rating, open loop, amplitude error
   beyond `abort_db` for 3 half-frames (sweep and dwell), a step that does not settle within
@@ -419,6 +441,10 @@ Recommended first test on hardware:
   - Check for unknown or misspelled TOML keys.
   - Check the cross-file rules (see [Overview](#overview)): drive limits, IEPE current and
     coupling, no `[sensor]` table in the settings file.
+  - `the profile (...) does not fit the selected hardware and settings`: each line names the
+    component that limits the band (shaker, sensor, DAQ, or a fixed `control.frame_size`).
+    Choose another shaker, sensor or DAQ, narrow the profile band, or use
+    `frame_size = "auto"`.
 - `cannot query NI-DAQmx: Could not find an installation of NI-DAQmx ...`:
   - The NI-DAQmx driver is missing: install it (Installation, step 4) and reboot.
   - Under WSL2 the driver cannot work; use `--sim`.
@@ -427,8 +453,7 @@ Recommended first test on hardware:
     appears in NI MAX, then rerun `vcactl list-devices`.
 - Pre-flight `FAIL` on profile checks:
   - Start with `--profile low_g` and `--level -12`.
-  - Re-check the frequency band (shaker, sensor, control rate), the sensor range and the
-    shaker's force and displacement limits.
+  - Re-check the sensor range and the shaker's force and displacement limits.
 - Runtime aborts (`AI overload`, `sensor over range`, `drive clipping`, `open loop`):
   - Lower `--level`, verify amplifier gain position/cabling, verify accelerometer mounting and
     IEPE setup, then rerun `pretest`.
@@ -440,17 +465,18 @@ Recommended first test on hardware:
 
 ### Random control
 
-- **Rates:** AI and AO run at 100 kS/s on one shared sample clock (AO is clocked from
-  `ai/SampleClock`). The control rate is 25 kS/s after 4× FIR decimation and interpolation
-  with ≥ 80 dB stop band. That filtering is needed because the USB-6211 has no anti-aliasing
-  filter. With frames of N = 4096, the line spacing is Δf = 6.1 Hz and one loop step is 82 ms.
-  The USB-4431 and PXIe-4468 have delta-sigma converters with built-in anti-aliasing. They run
-  at 51.2 kS/s with 2× decimation (25.6 kS/s control rate, Δf = 6.25 Hz). Their AO has its own
-  sample clock from the same timebase and starts on `ai/StartTrigger`. The converter filters
-  delay the response by about 100 samples (`limits.filter_delay_samples` in the DAQ profile),
-  and the controller shifts the drive by that amount before estimating the FRF. They can also
-  run with `decimation = 1` (no FIR filter), which raises the band limit to the converter
-  passband (see [Highest test frequency](#daq-devices---daq)).
+- **Rates:** AI and AO run on one shared sample clock at the I/O rate chosen for the run (see
+  [DAQ devices](#daq-devices---daq)). The USB-6211 has no anti-aliasing filter: AO is clocked
+  from `ai/SampleClock`, AI is oversampled at ≥ 100 kS/s, and FIR decimation and interpolation
+  (≥ 80 dB stop band) convert to the control rate, for example 10 kS/s (decimation 10) for a
+  3 kHz band. The USB-4431 and PXIe-4468 have delta-sigma converters with built-in
+  anti-aliasing. They run without decimation at the lowest rate whose passband covers the band.
+  Their AO has its own sample clock from the same timebase and starts on `ai/StartTrigger`.
+  The converter filters delay the response by 65–106 samples (`limits.filter_delay_samples`;
+  per rate for the PXIe-4468), and the controller shifts the drive by that amount before
+  estimating the FRF. The frame size follows the control rate, so the line spacing is
+  3.1–6.25 Hz and one loop step (half a frame) takes 80–160 ms at every rate, unless a low
+  f_lo needs finer lines.
 - **Drive:** each frame gets new random phases. Frames are sqrt-Hann windowed and overlap-added
   at 50 %, giving a continuous, Gaussian, non-periodic signal. AO regeneration is off, so the
   output always comes from the controller.
@@ -492,7 +518,7 @@ Recommended first test on hardware:
 
 Each run directory (under `--log-dir`, default `runs/`) contains:
 
-- `meta.json`: all configs.
+- `meta.json`: all configs (with the rates and frame size of the run) and the `rates` choice.
 - `status.csv`: one row per half-frame.
 - `pretest_frf.csv`: FRF, coherence and noise floor.
 - `psd_<t>s.csv` snapshots and `psd_final.csv`: reference, control PSD, tolerance bands,
@@ -543,5 +569,6 @@ Layout:
 - `drive.py`: drive synthesis.
 - `dsp/`: resampling and spectra.
 - `safety.py`: pre-flight (random and sine) and runtime monitors.
+- `rates.py`: DAQ rate and frame size per run, and the band compatibility check.
 - `daq/nidaq.py`, `daq/sim.py`: backends.
 - `profile.py`, `config.py`, `logger.py`, `cli.py`.
