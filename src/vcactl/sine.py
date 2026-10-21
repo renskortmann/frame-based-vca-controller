@@ -34,6 +34,8 @@ SINE_STATUS_FIELDS = ["t_s", "state", "step", "level_db", "f_hz", "ref_pk_g", "m
                       "err_db", "drive_pk_v", "phase_deg", "drive_rms_v", "ai_peak_v",
                       "block_rms_g"]
 SWEEP_SETTLE_LIMIT_S = 30.0    # time allowed to reach the start amplitude of a sweep
+TUNED_LOOP_BLOCKS = 4          # loop delay (AO queue 2 + frame 2 half-frames) sine.correction_gain
+                               # is tuned for; a longer AO queue scales the gain down
 ABORT_BLOCKS = 3               # consecutive half-frames beyond abort_db before aborting
 RINGDOWN_PRE_S = 0.1           # response recorded before the cut
 
@@ -54,6 +56,7 @@ class SineController(ControllerBase):
         super().__init__(settings, shaker, profile, backend, **kwargs)
         self.sc = settings.sine
         self.tol = profile.tolerance
+        self.gain = self.sc.correction_gain * min(1.0, TUNED_LOOP_BLOCKS / (self.P + 2))
         cap = self.hist_cap
         # per drive sample, aligned with drive_hist (incl. the AO prefill added in run())
         self.phase_hist = History(cap)           # drive phase (rad)
@@ -217,7 +220,7 @@ class SineController(ControllerBase):
                                      f"exceeds +/-{self.tol.abort_db} dB")
             else:
                 self._bad_blocks = 0
-            step = float(np.clip(self.sc.correction_gain * est.err_db,
+            step = float(np.clip(self.gain * est.err_db,
                                  -self.sc.max_step_db, self.sc.max_step_db))
             self.corr_db = float(np.clip(self.corr_db + step, -self.sc.max_correction_db,
                                          self.sc.max_correction_db))

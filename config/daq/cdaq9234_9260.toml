@@ -1,0 +1,63 @@
+# NI CompactDAQ cDAQ-9174 chassis with an NI 9234 (AI) and an NI 9260 (AO), both 24-bit
+# delta-sigma C Series modules.
+# Values from Controller + DAQ/NI/cdaq-9174_2026-10-21-12-05-06.pdf,
+# ni-9234_specifications_2026-10-21-12-12-09.pdf and ni-9260_specifications_2026-10-21-12-52-43.pdf
+# in the Nextcloud project folder.
+# Select with --daq cdaq9234_9260.
+#
+# NI 9234: 4 BNC AI, pseudodifferential (AI- to chassis via 50 ohm), fixed +/-5 V, IEPE 2 mA
+# (compliance 19 V), AC (-3 dB at 0.5 Hz, -0.1 dB at 4.6 Hz) or DC coupling. The +/-5 V range
+# limits a 1 V/g accelerometer (PCB 356B18) to about 4.7 g.
+# NI 9260: 2 BNC AO, +/-4.243 V (3 V rms) minimum range, load >= 600 ohm, hardware-timed only.
+# It glitches at power-on (400 mV for 500 us) and steps by 100 mV for 200 us at the first output
+# after power-up, a reset or a clock source change: switch the amplifier on after the chassis.
+# Each module has its own 13.1072 MHz master timebase (+/-50 and +/-100 ppm), so the AO task
+# uses the AI task's sample clock timebase and starts on ai/StartTrigger (ao_sync =
+# "shared_timebase"); NI-DAQmx only does this by itself within one task. Untested on hardware:
+# check the delay and the drift with `vcactl loopback` before connecting a shaker.
+model = "NI cDAQ-9174 + NI 9234 + NI 9260"
+device = "cDAQ1"               # chassis name as shown by `vcactl list-devices` / NI MAX (terminals)
+ai_device = "cDAQ1Mod1"        # module (slot) of the NI 9234
+ao_device = "cDAQ1Mod2"        # module (slot) of the NI 9260
+ao_channel = "ao0"             # -> amplifier input (AO 0)
+ai_channel = "ai0"             # <- IEPE accelerometer or charge amplifier output (AI 0)
+ai_terminal_config = "PSEUDO_DIFF"
+ai_range_v = "auto"            # fixed +/-5 V ("auto" always gives 5)
+ai_coupling = "AC"             # AC or DC; AC is required with IEPE
+iepe_current_ma = 0.0          # 0 (off) or 2
+ao_range_v = 4.24              # fixed +/-4.243 V; 4.24 stays inside the DAQmx range
+fs_io_hz = "auto"              # AI/AO rate: "auto" (the lowest of fs_io_auto_hz whose band covers
+                               # the profile) or a fixed data rate (see fs_allowed_hz)
+fs_io_auto_hz = [2048.0, 2560.0, 3200.0, 5120.0, 6400.0, 10240.0, 12800.0, 25600.0, 51200.0]
+decimation = "auto"            # control rate = fs_io_hz / decimation; "auto" gives 1 (the
+                               # converters filter, so no FIR rate change is needed)
+ao_queue_blocks = 2            # half-frames queued ahead in the AO buffer (latency vs. underrun margin)
+
+[limits]
+ai_ranges_v = [5.0]
+ao_ranges_v = [4.24]
+ai_terminal_configs = ["PSEUDO_DIFF"]
+ao_terminal_configs = []
+ai_couplings = ["AC", "DC"]
+iepe_currents_ma = [2.0]
+fs_min_hz = 1651.612903        # 51.2 kS/s / 31
+fs_max_hz = 51200.0
+# Data rates (fM / 256) / n, fM = 13.1072 MHz, n = 1 .. 31 (NI 9234; the NI 9260 has the same
+# 1.652-51.2 kS/s range from the same fM).
+fs_allowed_hz = [51200.0, 25600.0, 17066.66667, 12800.0, 10240.0, 8533.333333, 7314.285714, 6400.0,
+                 5688.888889, 5120.0, 4654.545455, 4266.666667, 3938.461538, 3657.142857,
+                 3413.333333, 3200.0, 3011.764706, 2844.444444, 2694.736842, 2560.0, 2438.095238,
+                 2327.272727, 2226.086957, 2133.333333, 2048.0, 1969.230769, 1896.296296,
+                 1828.571429, 1765.517241, 1706.666667, 1651.612903]
+timebase_hz = 0.0
+antialias_filter = true        # delta-sigma ADC, alias-free to 0.45 fs, -100 dB from 0.55 fs
+ao_reconstruction_filter = true  # delta-sigma DAC, image rejection > 70 dB
+driver = "nidaqmx"
+ao_sync = "shared_timebase"    # AO uses the AI task's sample clock timebase and ai/StartTrigger
+ao_on_demand = false           # delta-sigma AO is hardware-timed only
+iepe_compliance_v = 19.0
+# AI input delay (40 + 13/512)/fs + 2.6 us plus AO output delay 30.767/fs + 3.2 us:
+# 70.8 samples + 5.8 us (0.3 samples at 51.2 kS/s).
+filter_delay_samples = 71.0
+passband_fraction = 0.45       # AI and AO passband: 0.45 fs
+# Highest test frequency (0.45 * fs_io_hz without decimation): 23.04 kHz at 51.2 kS/s.

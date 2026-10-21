@@ -7,9 +7,11 @@
 # The controller reads one axis: the z axis, along the shaker's motion. To control on another
 # axis, connect that axis and change sensitivity_mv_per_g to its value.
 #
+# Output bias 8-12 V DC: use AC coupling (DAQ IEPE on) or the AC-coupled output of the external
+# IEPE conditioner (USB-6211). With DAQ IEPE on, the highest bias + the swing at the range limit
+# (12 + 5.24 V) is checked against the DAQ's IEPE compliance voltage.
+#
 # Not checked by the controller:
-# - Output bias 8-12 V DC: use AC coupling (USB-4431/PXIe-4468 with IEPE on) or the AC-coupled
-#   output of the external IEPE conditioner (USB-6211).
 # - Settling time < 12 s (discharge time constant 0.8-3 s) after the IEPE excitation is switched
 #   on: wait before starting a pretest.
 # - 1/4-28 4-pin connector: needs a 4-pin to 3 x BNC breakout cable; connect only the control axis.
@@ -24,3 +26,4 @@ f_max_hz = 3000.0                  # resonance >= 20 kHz
 mass_kg = 0.025                    # added to safety.payload_kg
 iepe_min_ma = 2.0                  # constant current excitation 2-20 mA (20-30 V DC)
 iepe_max_ma = 20.0
+iepe_bias_max_v = 12.0             # output bias 8-12 V DC

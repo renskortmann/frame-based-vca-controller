@@ -19,6 +19,7 @@ dependencies = [
 plot = ["matplotlib>=3.5"]
 report = ["matplotlib>=3.5", "reportlab>=3.6", "python-pptx>=1.0"]   # tools/shaker_comparison.py, tools/client_options_deck.py
 test = ["pytest>=7"]
+ul = ["uldaq>=1.2.3; sys_platform != 'win32'"]   # DT9837A (needs libuldaq, UL for Linux)
 
 [project.scripts]
 vcactl = "vcactl.cli:main"

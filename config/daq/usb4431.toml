@@ -1,5 +1,5 @@
 # NI USB-4431 dynamic signal acquisition device (24-bit delta-sigma AI and AO, 4 AI, 1 AO).
-# Values from Controller + DAQ/NI-USB-443x-specifications.pdf
+# Values from Controller + DAQ/NI/NI-USB-443x-specifications.pdf
 # in the Nextcloud project folder.
 # Select with --daq usb4431.
 #
@@ -38,8 +38,11 @@ fs_allowed_hz = [51200.0, 25600.0, 12800.0, 6400.0, 3200.0, 1600.0,
                  96000.0, 48000.0, 24000.0, 12000.0, 6000.0, 3000.0, 1500.0]
 timebase_hz = 0.0
 antialias_filter = true        # delta-sigma ADC, alias-free to 0.49 fs
+ao_reconstruction_filter = true  # delta-sigma DAC with interpolation filter
+driver = "nidaqmx"
 ao_sync = "start_trigger"      # AO starts on ai/StartTrigger, both clocked from the same timebase
 ao_on_demand = false           # DSA AO is hardware-timed only
+iepe_compliance_v = 20.0       # IEPE compliance voltage, 20 V min
 filter_delay_samples = 102.0   # ADC filter delay 39 samples + DAC filter delay 63.3 samples (max)
 passband_fraction = 0.453      # AO flat to 0.453 fs (+/-0.4 dB), AI to 46.4 kHz at 102.4 kS/s
 # Highest test frequency (0.453 * fs_io_hz without decimation): 43.5 kHz at 96 kS/s.

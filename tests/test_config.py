@@ -94,12 +94,62 @@ def test_bk4809_drive_limits_match_amp():
     assert sh.sim.amp_gain_a_per_v == pytest.approx(9.1 / 2.0)
 
 
-@pytest.mark.parametrize("daq", ["usb6211", "usb4431", "pxie4468"])
+ALL_DAQS = ["usb6211", "usb4431", "pxie4468", "cdaq9234_9260", "cdaq9232_9263", "dt9837a"]
+
+
+@pytest.mark.parametrize("daq", ALL_DAQS)
 @pytest.mark.parametrize("shaker", ["tv51110", "tv52110", "bk4809", "bk4801_4812"])
 def test_daq_profiles_load(daq, shaker):
     st = load_settings(daq=daq)
     validate_setup(st, load_shaker(shaker))
     assert st.daq.limits.antialias_filter == (daq != "usb6211")
+
+
+def test_cdaq_and_ul_profiles():
+    st = load_settings(daq="cdaq9234_9260")
+    assert (st.daq.device, st.daq.ai_device, st.daq.ao_device) == ("cDAQ1", "cDAQ1Mod1", "cDAQ1Mod2")
+    assert st.daq.limits.ao_sync == "shared_timebase" and st.daq.limits.driver == "nidaqmx"
+    st = load_settings(daq="cdaq9232_9263")
+    assert not st.daq.limits.ao_reconstruction_filter and st.daq.limits.ao_sync == "sample_clock"
+    st = load_settings(daq="dt9837a")
+    assert (st.daq.limits.driver, st.daq.limits.product, st.daq.limits.ao_sync) == \
+        ("uldaq", "DT9837A", "readback")
+    assert st.daq.limits.ao_lead_samples(51200.0) == 8192 + 20480
+
+
+def test_decimation_needs_both_converter_filters():
+    st = pin_rates(load_settings(daq="cdaq9232_9263"), 51200.0, 2)
+    validate_settings(st)
+    with pytest.raises(ConfigError, match="reconstruction filter"):
+        validate_settings(pin_rates(st, 51200.0, 1))
+
+
+@pytest.mark.parametrize("daq,changes,match", [
+    ("usb6211", {"ao_sync": "readback"}, "ao_sync"),           # a uldaq mode on nidaqmx
+    ("dt9837a", {"ao_sync": "sample_clock"}, "ao_sync"),
+    ("dt9837a", {"driver": "visa"}, "driver"),
+    ("dt9837a", {"product": ""}, "product"),
+    ("cdaq9234_9260", {"iepe_compliance_v": 0.0}, "iepe_compliance_v"),
+    ("dt9837a", {"ao_fifo_samples": -1}, "ao_fifo_samples"),
+])
+def test_driver_limits_validated(daq, changes, match):
+    st = load_settings(daq=daq)
+    bad = dataclasses.replace(st, daq=dataclasses.replace(
+        st.daq, limits=dataclasses.replace(st.daq.limits, **changes)))
+    with pytest.raises(ConfigError, match=match):
+        validate_settings(bad)
+
+
+def test_iepe_compliance():
+    """PCB 356B18: 12 V bias + 5.24 V at 5 g = 17.2 V, within the DT9837A's 18 V."""
+    st = load_settings(daq="dt9837a")
+    on = dataclasses.replace(st, daq=dataclasses.replace(st.daq, iepe_current_ma=4.0))
+    validate_settings(on)
+    high = dataclasses.replace(on, sensor=dataclasses.replace(on.sensor, iepe_bias_max_v=13.0))
+    with pytest.raises(ConfigError, match="compliance voltage 18 V"):
+        validate_settings(high)
+    off = dataclasses.replace(high, daq=dataclasses.replace(high.daq, iepe_current_ma=0.0))
+    validate_settings(off)                           # IEPE off: not checked
 
 
 def test_dsa_profiles():

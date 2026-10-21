@@ -150,7 +150,8 @@ def test_logging(settings, tv51110, flat_profile, tmp_path):
     assert np.mean(np.abs(ratio_db) < 3) > 0.95
 
 
-@pytest.mark.parametrize("daq", ["usb4431", "pxie4468"])
+@pytest.mark.parametrize("daq", ["usb4431", "pxie4468", "cdaq9234_9260", "cdaq9232_9263",
+                                 "dt9837a"])
 def test_converges_on_dsa_devices(daq, tv51110, wideband_profile):
     """DSA devices add ~100 samples of converter filter delay; the controller compensates it."""
     settings = load_settings(daq=daq, sensor=TEST_SENSOR)

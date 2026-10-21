@@ -36,9 +36,13 @@ def shaker_model_sos(shaker: ShakerConfig, payload_kg: float, fs: float) -> np.n
 
 
 class SimulatedDaq:
+    """``loopback_channel``: also return the AO, delayed by the DAQ's converter filter delay
+    only, as a second column (``vcactl loopback``; the channel name itself is not used)."""
+
     def __init__(self, settings: Settings, shaker: ShakerConfig, *,
                  sensor: SensorConfig | None = None, realtime: bool = False,
-                 seed: int | None = None, disconnect_after_s: float | None = None):
+                 seed: int | None = None, disconnect_after_s: float | None = None,
+                 loopback_channel: str | None = None):
         settings.require_rates("SimulatedDaq")
         self.fs_io = settings.daq.fs_io_hz
         self.ai_range = None           # set by start()
@@ -47,8 +51,10 @@ class SimulatedDaq:
             settings = dataclasses.replace(settings, sensor=sensor)
         self.v_per_g = settings.v_per_g
         self.sim = shaker.sim
-        self.delay_samples = self.sim.io_delay_samples + round(
-            settings.daq.limits.filter_delay_at(self.fs_io))
+        self.loopback_delay = round(settings.daq.limits.filter_delay_at(self.fs_io))
+        self.delay_samples = self.sim.io_delay_samples + self.loopback_delay
+        self.loopback = loopback_channel is not None
+        self.loopback_queue = np.zeros(0)
         self.sos = shaker_model_sos(shaker, settings.payload_total_kg, self.fs_io)
         self.zi = np.zeros((self.sos.shape[0], 2))
         self.rng = np.random.default_rng(seed)
@@ -64,6 +70,7 @@ class SimulatedDaq:
     def start(self, prefill: np.ndarray, ai_range_v: float) -> None:
         self.ai_range = ai_range_v
         self.queue = np.concatenate([np.zeros(self.delay_samples), prefill])
+        self.loopback_queue = np.concatenate([np.zeros(self.loopback_delay), prefill])
         self.running = True
         self.t0 = time.monotonic()
         self.written.append(np.asarray(prefill, dtype=float).copy())
@@ -74,6 +81,8 @@ class SimulatedDaq:
         if np.any(np.abs(data) > self.ao_range):
             raise DaqFault(f"AO sample outside +/-{self.ao_range:g} V")
         self.queue = np.concatenate([self.queue, data])
+        if self.loopback:
+            self.loopback_queue = np.concatenate([self.loopback_queue, data])
         self.written.append(np.asarray(data, dtype=float).copy())
 
     def read(self, n: int) -> np.ndarray:
@@ -97,7 +106,12 @@ class SimulatedDaq:
             volts = np.zeros(n)
         volts = volts + self.rng.normal(0.0, self.sim.sensor_noise_v, n)
         self.samples_read += n
-        return np.clip(volts, -self.ai_range * 1.05, self.ai_range * 1.05)
+        volts = np.clip(volts, -self.ai_range * 1.05, self.ai_range * 1.05)
+        if not self.loopback:
+            return volts
+        loop, self.loopback_queue = self.loopback_queue[:n], self.loopback_queue[n:]
+        loop = loop + self.rng.normal(0.0, self.sim.sensor_noise_v, n)
+        return np.column_stack([volts, loop])
 
     def stop(self) -> None:
         if self.running:

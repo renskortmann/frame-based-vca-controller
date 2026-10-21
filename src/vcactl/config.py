@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 import sys
 import typing
 from dataclasses import dataclass, field
@@ -69,16 +70,29 @@ class DaqLimits:
     fs_allowed_hz: tuple[float, ...]      # if not empty, only these rates are allowed
     timebase_hz: float                    # if > 0, timebase_hz / fs_io_hz must be an integer
     antialias_filter: bool                # built-in AI anti-aliasing (delta-sigma ADC)
-    ao_sync: str                          # "sample_clock": AO uses ai/SampleClock;
-                                          # "start_trigger": AO starts on ai/StartTrigger
+    ao_reconstruction_filter: bool        # built-in AO anti-imaging filter (delta-sigma DAC)
+    driver: str                           # "nidaqmx" or "uldaq" (UL for Linux)
+    ao_sync: str                          # how AO and AI share one clock (see validate_daq):
+                                          # nidaqmx: "sample_clock", "start_trigger" or
+                                          # "shared_timebase"; uldaq: "readback"
     ao_on_demand: bool                    # AO supports software-timed (on-demand) writes
+    iepe_compliance_v: float              # IEPE compliance voltage (0: no IEPE excitation)
     filter_delay_samples: float           # AO + AI converter filter delay in fs_io samples
                                           # (above the last rate of the table below)
     passband_fraction: float              # converter passband (AI and AO) as a fraction of fs_io
-    # rate-dependent delay (PXIe-4468): filter_delay_by_rate[i] samples for
+    # rate-dependent delay (PXIe-4468, NI 9232): filter_delay_by_rate[i] samples for
     # fs_io_hz <= filter_delay_max_rate_hz[i]; empty: filter_delay_samples at every rate
     filter_delay_max_rate_hz: tuple[float, ...] = ()
     filter_delay_by_rate: tuple[float, ...] = ()
+    product: str = ""                     # uldaq: product name of the device (e.g. "DT9837A")
+    # AO data the driver keeps ahead of the output (device FIFO + transfers in flight); the AO
+    # queue (daq.ao_queue_blocks) is raised per run to cover it (see vcactl.rates)
+    ao_fifo_samples: int = 0
+    ao_transfer_s: float = 0.0
+
+    def ao_lead_samples(self, fs_io_hz: float) -> int:
+        """AO samples the driver holds ahead of the output at ``fs_io_hz``."""
+        return self.ao_fifo_samples + math.ceil(self.ao_transfer_s * fs_io_hz)
 
     def filter_delay_at(self, fs_io_hz: float) -> float:
         """Converter filter delay in samples at the I/O rate ``fs_io_hz``."""
@@ -92,7 +106,9 @@ class DaqLimits:
 class DaqConfig:
     model: str
     limits: DaqLimits
-    device: str = "Dev1"
+    device: str = "Dev1"                  # device (nidaqmx: also the chassis for terminals)
+    ai_device: str = ""                   # module with the AI channel (cDAQ: "cDAQ1Mod1"); empty: device
+    ao_device: str = ""                   # module with the AO channel; empty: device
     ao_channel: str = "ao0"
     ai_channel: str = "ai1"
     ai_terminal_config: str = "DIFF"
@@ -119,6 +135,7 @@ class SensorConfig:
     mass_kg: float = 0.0                  # added to safety.payload_kg
     iepe_min_ma: float = 0.0              # IEPE excitation current range; 0, 0 = not IEPE
     iepe_max_ma: float = 0.0
+    iepe_bias_max_v: float = 0.0          # highest IEPE output bias voltage; 0: unknown, not checked
 
 
 @dataclass(frozen=True)
@@ -371,10 +388,23 @@ def _check_rate(d: DaqConfig, fs: float, name: str, where: str) -> None:
                               f"({d.model}), got {fs:g}")
 
 
+AO_SYNC_MODES = {"nidaqmx": ("sample_clock", "start_trigger", "shared_timebase"),
+                 "uldaq": ("readback",)}
+
+
 def validate_daq(d: DaqConfig, where: str = "daq") -> None:
     lim = d.limits
-    if lim.ao_sync not in ("sample_clock", "start_trigger"):
-        raise ConfigError(f"{where}: limits.ao_sync must be sample_clock or start_trigger")
+    if lim.driver not in AO_SYNC_MODES:
+        raise ConfigError(f"{where}: limits.driver must be one of {_fmt(tuple(AO_SYNC_MODES))}")
+    if lim.ao_sync not in AO_SYNC_MODES[lim.driver]:
+        raise ConfigError(f"{where}: limits.ao_sync must be one of "
+                          f"{_fmt(AO_SYNC_MODES[lim.driver])} with driver {lim.driver}")
+    if lim.driver == "uldaq" and not lim.product:
+        raise ConfigError(f"{where}: limits.product (the UL product name) is required with "
+                          "driver uldaq")
+    if lim.iepe_currents_ma and lim.iepe_compliance_v <= 0:
+        raise ConfigError(f"{where}: limits.iepe_compliance_v must be > 0 for a device with IEPE "
+                          "excitation")
     if d.ai_terminal_config.upper() not in lim.ai_terminal_configs:
         raise ConfigError(f"{where}: daq.ai_terminal_config must be one of "
                           f"{_fmt(lim.ai_terminal_configs)} ({d.model})")
@@ -420,6 +450,9 @@ def validate_daq(d: DaqConfig, where: str = "daq") -> None:
     elif not lim.antialias_filter and d.decimation < 2:
         raise ConfigError(f"{where}: daq.decimation must be >= 2: the {d.model} has no "
                           "anti-aliasing filter, so AI must be oversampled and filtered digitally")
+    elif not lim.ao_reconstruction_filter and d.decimation < 2:
+        raise ConfigError(f"{where}: daq.decimation must be >= 2: the {d.model} has no AO "
+                          "reconstruction filter, so AO must be interpolated digitally")
     if not 0 < lim.passband_fraction <= 0.5:
         raise ConfigError(f"{where}: limits.passband_fraction must be in (0, 0.5]")
     rates = list(lim.filter_delay_max_rate_hz)
@@ -428,6 +461,8 @@ def validate_daq(d: DaqConfig, where: str = "daq") -> None:
                           "long as limits.filter_delay_by_rate")
     if d.conditioner_gain <= 0:
         raise ConfigError(f"{where}: daq.conditioner_gain must be > 0")
+    if lim.ao_fifo_samples < 0 or lim.ao_transfer_s < 0:
+        raise ConfigError(f"{where}: limits.ao_fifo_samples and ao_transfer_s must be >= 0")
 
 
 def validate_sensor(sn: SensorConfig, where: str = "sensor") -> None:
@@ -435,8 +470,8 @@ def validate_sensor(sn: SensorConfig, where: str = "sensor") -> None:
         raise ConfigError(f"{where}: sensor.sensitivity_mv_per_g and range_g_pk must be > 0")
     if not 0 < sn.f_min_hz < sn.f_max_hz:
         raise ConfigError(f"{where}: sensor.f_min_hz must be > 0 and < f_max_hz")
-    if sn.mass_kg < 0:
-        raise ConfigError(f"{where}: sensor.mass_kg must be >= 0")
+    if sn.mass_kg < 0 or sn.iepe_bias_max_v < 0:
+        raise ConfigError(f"{where}: sensor.mass_kg and iepe_bias_max_v must be >= 0")
     if not 0 <= sn.iepe_min_ma <= sn.iepe_max_ma:
         raise ConfigError(f"{where}: sensor.iepe_min_ma must be >= 0 and <= iepe_max_ma")
 
@@ -471,6 +506,12 @@ def validate_settings(cfg: Settings, where: str = "settings") -> None:
             raise ConfigError(f"{where}: daq.iepe_current_ma = {d.iepe_current_ma:g} mA is "
                               f"outside the {sn.name} range {sn.iepe_min_ma:g}-"
                               f"{sn.iepe_max_ma:g} mA")
+        swing_v = sn.range_g_pk * sn.sensitivity_mv_per_g / 1000
+        if sn.iepe_bias_max_v > 0 and sn.iepe_bias_max_v + swing_v > d.limits.iepe_compliance_v:
+            raise ConfigError(f"{where}: the {sn.name} output reaches {sn.iepe_bias_max_v:g} V "
+                              f"bias + {swing_v:.2f} V at {sn.range_g_pk:g} g, above the "
+                              f"{d.model} IEPE compliance voltage "
+                              f"{d.limits.iepe_compliance_v:g} V")
     sc = cfg.sine
     if not 0 < sc.correction_gain <= 1:
         raise ConfigError(f"{where}: sine.correction_gain must be in (0, 1]")

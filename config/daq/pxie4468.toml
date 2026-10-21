@@ -1,5 +1,5 @@
 # NI PXIe-4468 dynamic signal acquisition module (24-bit delta-sigma, 2 AI, 2 AO).
-# Values from Controller + DAQ/pxie-4468_specifications_2026-09-30-15-05-09.pdf
+# Values from Controller + DAQ/NI/pxie-4468_specifications_2026-09-30-15-05-09.pdf
 # in the Nextcloud project folder.
 # Select with --daq pxie4468.
 #
@@ -34,8 +34,11 @@ fs_max_hz = 200000.0           # AO max (AI up to 250 kS/s)
 fs_allowed_hz = []
 timebase_hz = 0.0
 antialias_filter = true        # delta-sigma ADC, alias-free to 0.454 fs
+ao_reconstruction_filter = true  # delta-sigma DAC, image rejection 100 dB
+driver = "nidaqmx"
 ao_sync = "start_trigger"      # AO starts on ai/StartTrigger, both clocked from the same reference
 ao_on_demand = false           # DSA AO is hardware-timed only
+iepe_compliance_v = 24.0       # IEPE voltage compliance (bias + full scale must stay within 0-24 V)
 # AO output delay per rate (datasheet table; the AI digital filter delay is compensated to 0 by
 # the driver): filter_delay_by_rate[i] samples for fs_io_hz <= filter_delay_max_rate_hz[i], and
 # filter_delay_samples above the last rate (190-200 kS/s).

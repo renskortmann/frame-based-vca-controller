@@ -1,16 +1,22 @@
-"""NI-DAQmx backend (Windows 11; native Linux only for the PXIe-4468) for the devices in ``config/daq``.
+"""NI-DAQmx backend for the NI devices in ``config/daq`` (Windows 11; native Linux for the
+PXIe-4468 and the CompactDAQ modules).
 
 One AO channel drives the amplifier, one AI channel reads the accelerometer signal. AI and AO run
 at the same rate and start together, so AO sample k and AI sample k belong to the same clock edge
 (apart from the converter filter delay of DSA devices, which the controller compensates):
 
-- ``ao_sync = "sample_clock"`` (USB-6211): AO is clocked from ``/<dev>/ai/SampleClock``.
+- ``ao_sync = "sample_clock"`` (USB-6211, cDAQ NI 9232 + NI 9263): AO is clocked from
+  ``/<dev>/ai/SampleClock``.
 - ``ao_sync = "start_trigger"`` (DSA devices such as USB-4431, PXIe-4468): AO uses its own
   sample clock, derived from the same timebase, and starts on ``/<dev>/ai/StartTrigger``.
+- ``ao_sync = "shared_timebase"`` (cDAQ NI 9234 + NI 9260): AI and AO are separate delta-sigma
+  modules with their own oscillators, so the AO task also takes the AI task's sample clock
+  timebase.
 
-In both cases AO is started first and waits for AI, which starts when the AI task starts.
-AO regeneration is disabled, so every sample comes from the controller and an underflow is
-reported as an error instead of repeating old data.
+On CompactDAQ, ``device`` is the chassis (where the terminals are) and ``ai_device`` /
+``ao_device`` are the modules. In all cases AO is started first and waits for AI, which starts
+when the AI task starts. AO regeneration is disabled, so every sample comes from the controller
+and an underflow is reported as an error instead of repeating old data.
 """
 
 from __future__ import annotations
@@ -20,7 +26,7 @@ import warnings
 import numpy as np
 
 from ..config import DaqConfig, Settings
-from .base import DaqFault
+from .base import DaqFault, channel_number
 
 
 def list_devices() -> list[tuple[str, str, str]]:
@@ -44,7 +50,7 @@ def force_zero(d: DaqConfig) -> None:
     from nidaqmx.constants import AcquisitionType
 
     with nidaqmx.Task() as task:
-        task.ao_channels.add_ao_voltage_chan(f"{d.device}/{d.ao_channel}",
+        task.ao_channels.add_ao_voltage_chan(f"{d.ao_device or d.device}/{d.ao_channel}",
                                              min_val=-d.ao_range_v, max_val=d.ao_range_v)
         if d.limits.ao_on_demand:
             task.write(0.0, auto_start=True)
@@ -59,16 +65,21 @@ def force_zero(d: DaqConfig) -> None:
 
 
 class NiDaq:
-    def __init__(self, settings: Settings, block_io: int):
+    """``loopback_channel``: a second AI channel (``vcactl loopback``), read in the same task with
+    IEPE off and DC coupling; ``read`` then returns two columns (control, loopback)."""
+
+    def __init__(self, settings: Settings, block_io: int, loopback_channel: str | None = None):
         import nidaqmx  # noqa: F401  (import errors surface here, not at module import)
 
         settings.require_rates("NiDaq")
         self.cfg = settings.daq
         self.fs_io = settings.daq.fs_io_hz
         self.block_io = block_io
+        self.loopback_channel = loopback_channel
         self.ao_task = self.ai_task = None
         self._reader = self._writer = None
-        self._ai_buf = np.zeros(block_io)
+        self._ai_buf = None
+        self._columns = [0]
         self.actual_rate = None
         self.ai_range_v = None
 
@@ -76,27 +87,34 @@ class NiDaq:
         import nidaqmx
         from nidaqmx.constants import (AcquisitionType, Coupling, ExcitationSource,
                                        ExcitationVoltageOrCurrent, RegenerationMode,
-                                       TerminalConfiguration)
-        from nidaqmx.stream_readers import AnalogSingleChannelReader
+                                       TaskMode, TerminalConfiguration)
+        from nidaqmx.stream_readers import AnalogMultiChannelReader, AnalogSingleChannelReader
         from nidaqmx.stream_writers import AnalogSingleChannelWriter
 
         d = self.cfg
-        dev = d.device
+        dev = d.device                       # CompactDAQ: the chassis, where the terminals are
+        ai_dev, ao_dev = d.ai_device or dev, d.ao_device or dev
         term = TerminalConfiguration[d.ai_terminal_config.upper()]
 
         self.ai_task = nidaqmx.Task("vcactl_ai")
-        ai = self.ai_task.ai_channels.add_ai_voltage_chan(
-            f"{dev}/{d.ai_channel}", terminal_config=term,
-            min_val=-self.ai_range_v, max_val=self.ai_range_v)
-        if len(d.limits.ai_couplings) > 1:
-            ai.ai_coupling = Coupling[d.ai_coupling.upper()]
-        if d.limits.iepe_currents_ma:
-            if d.iepe_current_ma > 0:
-                ai.ai_excit_src = ExcitationSource.INTERNAL
-                ai.ai_excit_voltage_or_current = ExcitationVoltageOrCurrent.USE_CURRENT
-                ai.ai_excit_val = d.iepe_current_ma / 1000
-            else:
-                ai.ai_excit_src = ExcitationSource.NONE
+        names = [d.ai_channel] + ([self.loopback_channel] if self.loopback_channel else [])
+        order = sorted(range(len(names)), key=lambda i: channel_number(names[i]))
+        for i in order:                      # DSA devices need ascending channel order
+            ai = self.ai_task.ai_channels.add_ai_voltage_chan(
+                f"{ai_dev}/{names[i]}", terminal_config=term,
+                min_val=-self.ai_range_v, max_val=self.ai_range_v)
+            control = i == 0
+            coupling = d.ai_coupling if control else "DC"
+            if len(d.limits.ai_couplings) > 1 and coupling.upper() in d.limits.ai_couplings:
+                ai.ai_coupling = Coupling[coupling.upper()]
+            if d.limits.iepe_currents_ma:
+                if control and d.iepe_current_ma > 0:
+                    ai.ai_excit_src = ExcitationSource.INTERNAL
+                    ai.ai_excit_voltage_or_current = ExcitationVoltageOrCurrent.USE_CURRENT
+                    ai.ai_excit_val = d.iepe_current_ma / 1000
+                else:
+                    ai.ai_excit_src = ExcitationSource.NONE
+        self._columns = [order.index(i) for i in range(len(names))]
         self.ai_task.timing.cfg_samp_clk_timing(
             self.fs_io, sample_mode=AcquisitionType.CONTINUOUS, samps_per_chan=self.block_io * 20)
         self.ai_task.in_stream.input_buf_size = self.block_io * 20
@@ -107,7 +125,7 @@ class NiDaq:
 
         self.ao_task = nidaqmx.Task("vcactl_ao")
         ao = self.ao_task.ao_channels.add_ao_voltage_chan(
-            f"{dev}/{d.ao_channel}", min_val=-d.ao_range_v, max_val=d.ao_range_v)
+            f"{ao_dev}/{d.ao_channel}", min_val=-d.ao_range_v, max_val=d.ao_range_v)
         if d.ao_terminal_config:
             ao.ao_term_cfg = TerminalConfiguration[d.ao_terminal_config.upper()]
         if d.limits.ao_sync == "sample_clock":
@@ -117,6 +135,14 @@ class NiDaq:
         else:
             self.ao_task.timing.cfg_samp_clk_timing(
                 self.fs_io, sample_mode=AcquisitionType.CONTINUOUS, samps_per_chan=prefill_len)
+            if d.limits.ao_sync == "shared_timebase":
+                # separate delta-sigma modules: AO uses the AI module's master timebase, so the
+                # two oscillators cannot drift apart (untested on hardware: vcactl loopback)
+                self.ai_task.control(TaskMode.TASK_RESERVE)
+                self.ao_task.timing.samp_clk_timebase_src = \
+                    self.ai_task.timing.samp_clk_timebase_term
+                self.ao_task.timing.samp_clk_timebase_rate = \
+                    self.ai_task.timing.samp_clk_timebase_rate
             self.ao_task.triggers.start_trigger.cfg_dig_edge_start_trig(f"/{dev}/ai/StartTrigger")
             ao_rate = self.ao_task.timing.samp_clk_rate
             if abs(ao_rate - self.fs_io) > 1e-6 * self.fs_io:
@@ -125,7 +151,8 @@ class NiDaq:
         self.ao_task.out_stream.regen_mode = RegenerationMode.DONT_ALLOW_REGENERATION
         self.ao_task.out_stream.output_buf_size = prefill_len + self.block_io * 4
 
-        self._reader = AnalogSingleChannelReader(self.ai_task.in_stream)
+        reader = AnalogMultiChannelReader if self.loopback_channel else AnalogSingleChannelReader
+        self._reader = reader(self.ai_task.in_stream)
         self._writer = AnalogSingleChannelWriter(self.ao_task.out_stream, auto_start=False)
 
     def _call(self, fn, *args, **kwargs):
@@ -155,10 +182,14 @@ class NiDaq:
                    timeout=10.0)
 
     def read(self, n: int) -> np.ndarray:
-        if len(self._ai_buf) != n:
-            self._ai_buf = np.zeros(n)
+        """``n`` AI samples (V): shape (n,), or (n, 2) with a loopback channel."""
+        shape = (len(self._columns), n) if self.loopback_channel else (n,)
+        if self._ai_buf is None or self._ai_buf.shape != shape:
+            self._ai_buf = np.zeros(shape)
         self._call(self._reader.read_many_sample, self._ai_buf,
                    number_of_samples_per_channel=n, timeout=10.0)
+        if self.loopback_channel:
+            return self._ai_buf[self._columns].T.copy()
         return self._ai_buf.copy()
 
     def stop(self) -> None:

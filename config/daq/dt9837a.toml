@@ -1,0 +1,64 @@
+# MCC (Data Translation) DT9837A USB module: 4 AI (24-bit delta-sigma, IEPE) and 1 AO (24-bit
+# delta-sigma). Driven through UL for Linux (the uldaq package), not NI-DAQmx: Linux or macOS only.
+# Values from Controller + DAQ/DT9837-Datasheet.pdf and DT9837-Product-Manual.pdf
+# in the Nextcloud project folder.
+# Select with --daq dt9837a.
+#
+# AI: 4 BNC, single-ended, +/-10 V (gain 1) or +/-1 V (gain 10), IEPE 4 mA (compliance 18 V),
+# AC (-3 dB at 0.1 Hz) or DC coupling. UL for Linux switches IEPE off and DC coupling on at
+# power-up; vcactl sets both at every start.
+# AO: BNC, +/-10 V, +/-3 mA (amplifier input >= 3.3 kohm), 10-52.734 kS/s, 29-sample DAC delay,
+# two-pole 10 kHz Butterworth output filter: -3 dB at 10 kHz, -7.8 dB at 15 kHz, -12.3 dB at
+# 20 kHz, -15.3 dB at 23.9 kHz. The controller compensates the filter (it is part of the
+# measured FRF), but the drive limits apply before it: a flat test loses 0.8 / 3 / 6 / 9 dB of
+# level for bands to 10 / 15 / 20 / 23.9 kHz, and above 10 kHz the logged drive is the value
+# before the filter, not the amplifier input. The AO goes to 0 V if the USB power is lost.
+# AI and AO start with separate software commands, so their offset is unknown; their PLLs run
+# from one 48 MHz reference with the same settings up to 52.734 kS/s (no drift). Every run starts
+# with a 10 mV, 40 ms marker on the AO; the backend finds it in the AO readback channel of the AI
+# stream and aligns the streams (ao_sync = "readback").
+# AO lag: in continuous mode uldaq keeps the 8192-sample AO FIFO and 32 USB transfers of 10 ms
+# full, so the output runs about 0.48 s behind the data handed over at 51.2 kS/s (1.2 s at
+# 10 kS/s). The rates are therefore kept at 51.2 kS/s or more; the AO queue is raised per run to
+# cover the lag (about 0.6 s of drive still plays after an abort, before the ramp-down), and the
+# sine correction gain is scaled down for the longer loop delay.
+# Untested on hardware: check with `vcactl loopback` before connecting a shaker.
+model = "MCC DT9837A"
+device = ""                    # UL unique ID (serial) from `vcactl list-devices`; empty: the first DT9837A
+ao_channel = "ao0"             # -> amplifier input (BNC AO 0)
+ai_channel = "ai0"             # <- IEPE accelerometer or charge amplifier output (BNC AI 0)
+ai_terminal_config = "SINGLE_ENDED"
+ai_range_v = "auto"            # "auto" (smallest range for the expected peak) or 1, 10
+ai_coupling = "AC"             # AC or DC; AC is required with IEPE
+iepe_current_ma = 0.0          # 0 (off) or 4
+ao_range_v = 10.0              # fixed +/-10 V
+fs_io_hz = "auto"              # AI/AO rate: "auto" (the lowest of fs_io_auto_hz whose band covers
+                               # the profile) or a fixed rate, 10-52.734 kS/s
+fs_io_auto_hz = [51200.0, 52734.0]  # >= 51.2 kS/s keeps the AO lag short (see above)
+decimation = "auto"            # control rate = fs_io_hz / decimation; "auto" gives 1 (the
+                               # converters filter, so no FIR rate change is needed)
+ao_queue_blocks = 2            # half-frames queued ahead on AO; raised per run to cover the AO lag
+
+[limits]
+ai_ranges_v = [1.0, 10.0]
+ao_ranges_v = [10.0]
+ai_terminal_configs = ["SINGLE_ENDED"]
+ao_terminal_configs = []
+ai_couplings = ["AC", "DC"]
+iepe_currents_ma = [4.0]
+fs_min_hz = 10000.0            # AO minimum (AI from 195.3 Hz)
+fs_max_hz = 52734.0            # AI and AO maximum; above it the AI PLL would run at 256 x fs
+fs_allowed_hz = []
+timebase_hz = 0.0
+antialias_filter = true        # delta-sigma ADC, passband 0.453 fs, -100 dB from 0.547 fs
+ao_reconstruction_filter = true  # delta-sigma DAC (passband 0.454 fs) plus the 10 kHz filter
+driver = "uldaq"
+product = "DT9837A"
+ao_sync = "readback"           # streams aligned on the AO readback channel (see above)
+ao_on_demand = true            # single-value output (used to force 0 V)
+iepe_compliance_v = 18.0
+filter_delay_samples = 0.0     # the readback alignment already includes the DAC delay and filter
+ao_fifo_samples = 8192         # AO FIFO, kept full by uldaq
+ao_transfer_s = 0.4            # 32 USB transfers of 10 ms in flight (rounded up to 512 bytes each)
+passband_fraction = 0.453      # AI passband 0.453 fs (the AO filter is compensated by the loop)
+# Highest test frequency (0.453 * fs_io_hz without decimation): 23.9 kHz at 52.734 kS/s.

@@ -6,6 +6,7 @@ import math
 import numpy as np
 import pytest
 
+from vcactl.config import load_settings
 from vcactl.controller import State
 from vcactl.daq.sim import SimulatedDaq
 from vcactl.dsp.resample import design_lowpass
@@ -13,7 +14,7 @@ from vcactl.logger import RunLogger
 from vcactl.profile import load_profile
 from vcactl.rates import resolve_rates
 from vcactl.sine import SINE_STATUS_FIELDS, SineController
-from conftest import PROFILES
+from conftest import PROFILES, TEST_SENSOR
 
 
 def write_profile(tmp_path, body: str):
@@ -55,6 +56,22 @@ def test_sweep_tracks_reference(settings, shaker, tmp_path):
     # the measured frame lags the drive by about half a frame around the turnaround
     assert np.all(np.diff(up[3:]) > 0) and np.all(np.diff(down[3:]) < 0)
     assert_safe_stop(shaker, backend)
+
+
+def test_sweep_with_a_long_ao_queue(tv51110, tmp_path):
+    """DT9837A: 8 half-frames of AO queue (0.64 s); the sine correction gain is scaled down
+    (4 / 10). The late correction tracks the suspension resonance less tightly, so the sweep
+    runs at half the rate of the other sweep tests (3 instead of 6 oct/min)."""
+    settings = load_settings(daq="dt9837a", sensor=TEST_SENSOR)
+    prof = write_profile(tmp_path, SWEEP.replace("1000.0", "200.0").replace("6.0", "3.0")
+                         .replace("sweeps = 2", "sweeps = 1"))
+    rows = []
+    ctl, backend, res = run(settings, tv51110, prof, rows=rows)
+    assert res.completed and res.state == State.DONE, res.reason
+    assert ctl.P == 8 and ctl.gain == pytest.approx(settings.sine.correction_gain * 4 / 10)
+    errs = np.abs([r["err_db"] for r in rows if r["state"].startswith("sweep") and "err_db" in r])
+    assert np.mean(errs <= 1.0) > 0.95 and errs.max() < 3.0
+    assert_safe_stop(tv51110, backend)
 
 
 def test_sweep_on_nonlinear_shaker(settings, tv51110, tmp_path):

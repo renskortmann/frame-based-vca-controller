@@ -1,8 +1,9 @@
-"""Command-line interface: ``vcactl {list-devices,check,pretest,run}``."""
+"""Command-line interface: ``vcactl {list-devices,check,pretest,run,loopback}``."""
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import signal
 import sys
 import time
@@ -14,6 +15,7 @@ from . import __version__
 from .config import (DEFAULT_CONFIG_DIR, ConfigError, load_shaker, load_settings,
                      resolve_config_path, validate_setup)
 from .controller import Controller, State
+from .daq.base import DaqFault, channel_number
 from .logger import STATUS_FIELDS, RunLogger
 from .profile import SineProfile, load_profile
 from .rates import resolve_rates
@@ -28,8 +30,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                    help="test profile key (low_g, flat, sloped, wideband, sine_sweep, stepped_sine, "
                         "ringdown) or path to a profile TOML file (random, sine_sweep or stepped_sine)")
     p.add_argument("--daq", default="usb6211",
-                   help="DAQ device key (usb6211, usb4431, pxie4468) or path to a DAQ TOML file "
-                        "(default usb6211)")
+                   help="DAQ device key (usb6211, usb4431, pxie4468, cdaq9234_9260, cdaq9232_9263, "
+                        "dt9837a) or path to a DAQ TOML file (default usb6211)")
     p.add_argument("--sensor", default="pcb356b18",
                    help="control accelerometer key (pcb356b18) or path to a sensor TOML file "
                         "(default pcb356b18)")
@@ -73,6 +75,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--duration", type=float, default=None,
                    help="random: test duration at full level in s (default: from profile); "
                         "ignored for sine profiles")
+
+    p = sub.add_parser("loopback", help="self-test: AO looped back into a spare AI channel "
+                                        "(amplifier disconnected); measures delay and drift")
+    p.add_argument("--daq", default="usb6211",
+                   help="DAQ device key (usb6211, usb4431, pxie4468, cdaq9234_9260, "
+                        "cdaq9232_9263, dt9837a) or path to a DAQ TOML file (default usb6211)")
+    p.add_argument("--loopback-channel", required=True,
+                   help="AI channel wired to the AO, for example ai1 (IEPE off, DC coupling)")
+    p.add_argument("--sensor", default="pcb356b18", help=argparse.SUPPRESS)
+    p.add_argument("--settings", "--station", dest="settings", default="default",
+                   help="settings key or path (default: default)")
+    p.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR)
+    p.add_argument("--duration", type=float, default=120.0, help="test duration in s (default 120)")
+    p.add_argument("--level-v", type=float, default=0.05,
+                   help="noise level on the AO in V rms (default 0.05, at most 0.5)")
+    p.add_argument("--sim", action="store_true", help="use the simulated DAQ")
+    p.add_argument("--shaker", default="tv51110", help="shaker for --sim (default tv51110)")
+    p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    p.add_argument("--seed", type=int, default=None, help="random seed")
     return ap
 
 
@@ -99,26 +120,68 @@ def _print_status(row: dict, last: list) -> None:
     sys.stdout.flush()
 
 
-def _make_backend(args, settings, shaker, block_io):
+def _make_backend(args, settings, shaker, block_io, loopback_channel=None):
     if args.sim:
         from .daq.sim import SimulatedDaq
-        return SimulatedDaq(settings, shaker, realtime=args.sim_realtime, seed=args.seed)
+        return SimulatedDaq(settings, shaker, realtime=getattr(args, "sim_realtime", False),
+                            seed=args.seed, loopback_channel=loopback_channel)
+    if settings.daq.limits.driver == "uldaq":
+        from .daq.ul import UlDaq
+        return UlDaq(settings, block_io, loopback_channel)
     from .daq.nidaq import NiDaq
-    return NiDaq(settings, block_io)
+    return NiDaq(settings, block_io, loopback_channel)
 
 
 def cmd_list_devices() -> int:
-    from .daq.nidaq import list_devices
+    queried = found = 0
+    for library, module in (("NI-DAQmx", ".daq.nidaq"), ("UL for Linux", ".daq.ul")):
+        try:
+            devices = importlib.import_module(module, __package__).list_devices()
+        except Exception as exc:
+            print(f"cannot query {library}: {exc}", file=sys.stderr)
+            continue
+        queried += 1
+        for name, product, serial in devices:
+            print(f"{name:<10} {product:<16} serial {serial}   ({library})")
+            found += 1
+    if queried and not found:
+        print("no DAQ devices found")
+    return 0 if queried else 1
+
+
+def cmd_loopback(args) -> int:
+    from .loopback import block_samples, loopback_settings, run_loopback
+
     try:
-        devices = list_devices()
-    except Exception as exc:
-        print(f"cannot query NI-DAQmx: {exc}", file=sys.stderr)
+        settings = loopback_settings(load_settings(args.settings, args.daq, args.config_dir,
+                                                   args.sensor))
+        shaker = load_shaker(args.shaker, args.config_dir) if args.sim else None
+        d = settings.daq
+        if channel_number(args.loopback_channel) == channel_number(d.ai_channel):
+            raise ConfigError(f"--loopback-channel must differ from daq.ai_channel ({d.ai_channel})")
+        if not 0 < args.level_v <= 0.5:
+            raise ConfigError("--level-v must be in (0, 0.5] V rms")
+    except ConfigError as exc:
+        print(f"configuration error: {exc}", file=sys.stderr)
+        return 2
+    print(f"daq    : {d.model}, AO {d.ao_channel} -> AI {args.loopback_channel}, "
+          f"{d.fs_io_hz:g} S/s, noise {args.level_v:g} V rms for {args.duration:g} s\n")
+    if not args.sim and not args.yes:
+        print(f"Disconnect the amplifier from the AO and connect AO {d.ao_channel} to AI "
+              f"{args.loopback_channel} (IEPE is switched off on that channel).")
+        if input("Type 'yes' to start: ").strip().lower() != "yes":
+            print("cancelled")
+            return 1
+    backend = _make_backend(args, settings, shaker, block_samples(settings), args.loopback_channel)
+    try:
+        result = run_loopback(settings, backend, duration_s=args.duration, level_v=args.level_v,
+                              seed=args.seed)
+    except DaqFault as exc:
+        print(f"DAQ fault: {exc}")
         return 1
-    if not devices:
-        print("no NI-DAQmx devices found")
-    for name, product, serial in devices:
-        print(f"{name:<10} {product:<16} serial {serial}")
-    return 0
+    print(result.format())
+    print("\nPASS" if result.ok else "\nFAIL")
+    return 0 if result.ok else 2
 
 
 def _sensor_text(settings) -> str:
@@ -190,7 +253,7 @@ def cmd_run(args, settings, shaker, profile, rates, pretest_only: bool) -> int:
         return 2
     if not args.sim and not args.yes:
         print(f"\nAbout to drive {shaker.name} via {settings.daq.model} "
-              f"{settings.daq.device}/{settings.daq.ao_channel} "
+              f"{settings.daq.ao_device or settings.daq.device}/{settings.daq.ao_channel} "
               f"(max {shaker.max_drive_v:g} V).\n"
               f"Control sensor: {_sensor_text(settings)}.\n"
               "Check the amplifier gain, the accelerometer mounting and the charge amplifier "
@@ -260,6 +323,8 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.cmd == "list-devices":
         return cmd_list_devices()
+    if args.cmd == "loopback":
+        return cmd_loopback(args)
     try:
         settings = load_settings(args.settings, args.daq, args.config_dir, args.sensor)
         shaker = load_shaker(args.shaker, args.config_dir)

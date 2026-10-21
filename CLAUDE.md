@@ -8,12 +8,14 @@ This file only records what is not obvious from the code or README.
 
 - Setup: `python -m venv .venv && .venv/bin/pip install -e ".[plot,test]"`, then `.venv/bin/pytest`.
   All tests use the simulated backend, so no hardware is needed.
-- NI-DAQmx does not work under WSL2. In WSL2 always use `--sim`. Real hardware needs native
-  Windows 11: NI-DAQmx for Linux does not support the USB-6211 or USB-4431 (NI's OS compatibility
-  table, `Controller + DAQ/NI Hardware and Software Operating System Compatibility Data.xlsx` in
-  the Nextcloud folder); only the PXIe-4468 also runs on Linux. The tests, `check` and a `--sim`
-  run passed with Windows Python 3.12 (2026-10-21). Install the Windows checkout editable
-  (`pip install -e`): `DEFAULT_CONFIG_DIR` is found relative to the source tree.
+- NI-DAQmx does not work under WSL2. In WSL2 always use `--sim`. OS per DAQ (NI's OS
+  compatibility table, `Controller + DAQ/NI/NI Hardware and Software Operating System
+  Compatibility Data.xlsx` in the Nextcloud folder, and the DT9837 manual): USB-6211 and
+  USB-4431 Windows only; PXIe-4468 and the cDAQ-9174 with NI 9232/9234/9260/9263 Windows and
+  Linux; DT9837A Linux only (UL for Linux, `uldaq`; Data Translation's Windows driver is not
+  used). No single OS runs all of them. The tests, `check` and a `--sim` run passed with Windows
+  Python 3.12 (2026-10-21). Install the Windows checkout editable (`pip install -e`):
+  `DEFAULT_CONFIG_DIR` is found relative to the source tree.
 - Check a profile without hardware:
   `vcactl check --shaker bk4809 --daq usb6211 --profile low_g`
 - Work directly in the checked-out branch; no feature branch or PR is required.
@@ -33,9 +35,10 @@ Four files and a test profile combine into one run, each selected separately:
   limits at the amplifier input (`max_drive_v`, `max_drive_rms_v`).
 - DAQ (`--daq`, `config/daq/*.toml`, default `usb6211`): device settings plus `[limits]` with the
   data-sheet capabilities that settings are validated against (ranges, allowed rates, coupling,
-  IEPE, AO sync method, converter filter delay). The settings file can override DAQ settings in a
-  `[daq]` table, but never `model` or `[limits]`. `conditioner_gain` is the gain of an
-  external IEPE conditioner (USB-6211).
+  IEPE and its compliance voltage, driver, AO sync method, converter filters and delay). The
+  settings file can override DAQ settings in a `[daq]` table, but never `model` or `[limits]`.
+  `conditioner_gain` is the gain of an external IEPE conditioner (USB-6211). CompactDAQ files
+  name the chassis in `device` and the modules in `ai_device`/`ao_device`.
 - Sensor (`--sensor`, `config/sensors/*.toml`, default `pcb356b18`): the control accelerometer's
   calibrated sensitivity, range, frequency range, mass and IEPE current range. Settings files
   may not have a `[sensor]` table (the loader rejects it).
@@ -53,7 +56,9 @@ combination can be wrong. `validate_setup` (called by the CLI and the `Controlle
 cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is only +/-3.5 V) and
 `pretest.drive_rms_v` <= shaker `max_drive_rms_v`. `load_shaker` checks
 `max_drive_rms_v` <= `max_drive_v` and <= `amp_input_full_v`. `validate_settings` checks a
-DAQ IEPE current against the sensor's IEPE range. The pre-flight check compares the band with
+DAQ IEPE current against the sensor's IEPE range, and the sensor's highest bias
+(`iepe_bias_max_v`) plus its swing at `range_g_pk` against `limits.iepe_compliance_v` (356B18:
+17.2 V; DT9837A 18 V, NI 9234 19 V). The pre-flight check compares the band with
 the sensor's frequency range and the acceleration peak (`safety.accel_crest_factor` x rms for
 random) with `range_g_pk`; the runtime monitor aborts on a measured peak above it. The payload
 in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
@@ -109,6 +114,47 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   per run, so the pretest probes at -20 dB and lowers its drive to stay within half the range.
 - The DSA profiles are untested on hardware. The AI/AO start-trigger sync, coupling and IEPE
   settings follow the datasheets and the nidaqmx API but have only run against the simulator.
+- Decimation 1 needs both an AI anti-aliasing and an AO reconstruction filter
+  (`limits.antialias_filter`, `ao_reconstruction_filter`); otherwise the FIR interpolates the
+  drive (USB-6211, NI 9263).
+- cDAQ-9174 (`cdaq9234_9260`, `cdaq9232_9263`, added 2026-10-21, simulator only):
+  - NI 9234 + NI 9260: separate delta-sigma modules with their own 13.1072 MHz oscillators.
+    DAQmx shares timebase/sync pulse/start trigger automatically only within one task (and AI
+    and AO cannot share a task), so `ao_sync = "shared_timebase"` gives the AO task the AI
+    task's `samp_clk_timebase_term` and the AI start trigger. nidaqmx 1.6 has no sync-pulse
+    source property; the start trigger should do. Whether DAQmx accepts this route on the
+    cDAQ-9174 is the main open point: check with `vcactl loopback` (drift must be 0 ppm, delay
+    about 71 samples). Fallback: the 9232/9263 pair.
+  - NI 9232 + NI 9263: AO clocked from `ai/SampleClock` (NI: the non-delta-sigma module takes the
+    delta-sigma clock). The NI 9263 has no reconstruction filter, so decimation >= 2 and fs_io >=
+    51.2 kS/s. NI-DAQmx picks the highest decimation for the NI 9232/9234, so its input delay is
+    29/fs at 51.2 kS/s and 30/fs at 102.4 kS/s (+ about one sample for the AO).
+  - Delta-sigma modules (NI 9260) do not support on-demand AO: `force_zero` writes a burst.
+- DT9837A (`dt9837a`, `src/vcactl/daq/ul.py`, added 2026-10-21, tested only against a fake
+  uldaq in `tests/test_ul_backend.py`):
+  - **Start alignment:** uldaq has no simultaneous AI/AO start. The backend starts AI, then AO
+    with a 10 mV chirp marker, finds it in the `DAQI_DAC` readback (an analog measurement of the
+    AO output) and cuts the AI stream so that returned sample n belongs to AO sample n at the
+    output. `filter_delay_samples` is therefore 0.
+  - **AO lag:** in continuous mode uldaq keeps the 8192-sample AO FIFO and 32 USB transfers of
+    10 ms full (src/usb/UsbScanTransferOut.cpp, AoUsb9837x.h). So the AO runs about 0.48 s
+    behind the written data at 51.2 kS/s. `limits.ao_fifo_samples`/`ao_transfer_s` model this;
+    `resolve_rates` raises `ao_queue_blocks` to cover it, and `start` checks the measured lag.
+    The user chose a 51.2 kS/s floor for it (lag 0.5 s, 1.2 s at 10 kS/s).
+  - **Consequences:** about 0.6 s of drive plays after an abort. The sine gain is scaled by
+    4 / (queue + 2). In the sim, sweeps through resonances track less tightly (85 % within
+    1 dB at 6 oct/min, 96 % at 3 oct/min).
+  - **Rates:** the AI and AO PLLs are identical up to 52.734 kS/s (above it the AI uses 256 x fs),
+    so `fs_max_hz = 52734`; `start` refuses differing actual rates.
+  - **AO filter:** the 2-pole 10 kHz Butterworth AO filter is compensated by the loop; the band
+    goes to 0.453 fs = 23.9 kHz (user's choice, option 2). The drive limits apply before the
+    filter, so above 10 kHz less drive reaches the amplifier.
+  - **Watchdog:** a continuous UL scan would replay old drive. A watchdog thread zeroes taken AO
+    samples and stops the AO at 0 V if writes stop for `STALL_S`.
+- `vcactl loopback` (`src/vcactl/loopback.py`): AO wired to a spare AI channel, amplifier
+  disconnected; noise at the highest auto rate; reports the delay (start/end), the drift (ppm)
+  and the gain against `filter_delay_samples`. The backends take an optional
+  `loopback_channel` (second AI channel, IEPE off, DC), and `read` then returns two columns.
 
 ### Payload limits (all shaker files)
 
@@ -183,8 +229,9 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   in WSL `/mnt/c/Users/rkortmann/Nextcloud/CITG-macrolab/Projecten/CSAA04 HF Shakers (Alessandro)`.
   - `Shakers/`: shaker and amplifier datasheets/manuals (TIRA, BK 4809, Palladium P-2000, BK 4801/4812/2707),
     the RFQ template, the shaker comparison (`shaker_comparison.pdf`, .docx) and other candidates.
-  - `Controller + DAQ/`: NI DAQ specifications and the DAQmx user manual, sensor datasheets
-    (ADXL326, optoNCDT 1220, VR9700) and the presentation below.
+  - `Controller + DAQ/`: `NI/` (NI DAQ and C Series specifications, the DAQmx user manual and
+    the OS compatibility table), the DT9837 datasheet and product manual, sensor datasheets
+    (ADXL326, optoNCDT 1220, VR9700, PCB) and the presentation below.
   - `Ommatidia Lidar/`: Q1/Q2 lidar and VR9700 integration documents.
 - Presentation for the researcher (the user's colleague in the same department; the user is the lab
   engineer supporting them): `Controller + DAQ/shaker_controller_options_draft.pptx` in that folder.

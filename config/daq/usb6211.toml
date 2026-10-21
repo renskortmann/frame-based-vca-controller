@@ -1,5 +1,5 @@
 # NI USB-6211 multifunction DAQ (16-bit SAR ADC, no anti-aliasing filter).
-# Values from Controller + DAQ/usb-6211_specifications_2026-09-28-13-21-50.pdf
+# Values from Controller + DAQ/NI/usb-6211_specifications_2026-09-28-13-21-50.pdf
 # in the Nextcloud project folder.
 # Select with --daq usb6211 (the default).
 model = "NI USB-6211"
@@ -34,8 +34,11 @@ fs_max_hz = 250000.0           # AI 250 kS/s single channel, AO 250 kS/s
 fs_allowed_hz = []
 timebase_hz = 20e6             # sample clock timebase
 antialias_filter = false       # AI must be oversampled: decimation >= 2
+ao_reconstruction_filter = false  # R-2R DAC: AO images only attenuated by the zero-order hold
+driver = "nidaqmx"
 ao_sync = "sample_clock"       # AO is clocked from ai/SampleClock
 ao_on_demand = true
+iepe_compliance_v = 0.0        # no IEPE excitation (external conditioner)
 filter_delay_samples = 0.0     # SAR ADC and R-2R DAC: no converter filter delay
 passband_fraction = 0.5        # no converter filter (Nyquist only); the decimation FIR sets the band
 # Highest test frequency (0.3 * fs_io_hz / decimation): 37.5 kHz at 250 kS/s, decimation 2.

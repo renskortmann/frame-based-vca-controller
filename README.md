@@ -1,16 +1,24 @@
 # vcactl — frame-based closed-loop vibration controller
 
 `vcactl` is a closed-loop vibration controller for electrodynamic shakers. It sends the drive
-through an NI DAQ and closes the loop with an IEPE accelerometer. It can run various test
-profiles and can be configured for different hardware (shaker and amplifier, DAQ, sensor). Both
-are explained below, under [Configuration](#configuration): the hardware files first, then the
-[test profiles](#test-profiles---profile). Real hardware runs on **Windows 11**; the simulated
-shaker (`--sim`) runs anywhere, for development without hardware.
+through a DAQ (NI devices through NI-DAQmx, the MCC DT9837A through UL for Linux) and closes the
+loop with an IEPE accelerometer. It can run various test profiles and can be configured for
+different hardware (shaker and amplifier, DAQ, sensor). Both are explained below, under
+[Configuration](#configuration): the hardware files first, then the
+[test profiles](#test-profiles---profile). The simulated shaker (`--sim`) runs anywhere, for
+development without hardware.
 
-> NI-DAQmx for Linux does not support the USB-6211 or the USB-4431 (NI's OS compatibility
-> table: Windows only); of the DAQ profiles only the PXIe-4468 also runs on native Linux. WSL2
-> cannot run NI-DAQmx at all, because the driver needs native kernel/USB access. Under Linux or
-> WSL2, use `--sim` only.
+Operating system per DAQ (NI's OS compatibility table, the DT9837 manual):
+
+| DAQ | Windows 11 | Linux |
+|---|---|---|
+| USB-6211, USB-4431 | yes | no (not supported by NI-DAQmx for Linux) |
+| PXIe-4468; cDAQ-9174 with NI 9232, 9234, 9260, 9263 | yes | yes (Ubuntu 22.04/24.04, RHEL, openSUSE) |
+| DT9837A | no (only Data Translation's own driver, which vcactl does not use) | yes (UL for Linux) |
+
+> WSL2 cannot run NI-DAQmx, because the driver needs native kernel/USB access: under WSL2 use
+> `--sim`. UL for Linux might work in WSL2 with the DT9837A attached through usbipd-win
+> (untested).
 
 Contents:
 
@@ -39,15 +47,23 @@ Contents:
    ```
    .venv/bin/pip install -e ".[plot,test]"        # Windows: .venv\Scripts\pip ...
    ```
-4. Install the **NI-DAQmx driver** (required for real hardware, separate from the Python package):
-   - Windows 11: NI-DAQmx from ni.com, or `python -m nidaqmx installdriver` after step 3.
-   - Linux (PXIe-4468 only; the USB devices are not supported): NI-DAQmx for Linux on a
-     supported distribution (Ubuntu LTS, RHEL, openSUSE). Follow NI's repository instructions and
-     reboot so the kernel modules load.
-5. Check that the device is visible. If it has a different name, set `daq.device` to that name:
+4. Install the **driver** of the DAQ (required for real hardware, separate from the Python
+   package):
+   - NI devices on Windows 11: NI-DAQmx from ni.com, or `python -m nidaqmx installdriver` after
+     step 3.
+   - NI devices on Linux (PXIe-4468 and CompactDAQ; not the USB-6211/4431): NI-DAQmx for Linux on
+     a supported distribution (Ubuntu LTS, RHEL, openSUSE). Follow NI's repository instructions
+     and reboot so the kernel modules load.
+   - DT9837A on Linux: build and install libuldaq from MCC's release at
+     <https://github.com/mccdaq/uldaq> (needs `libusb-1.0-0-dev`; `./configure && make && sudo
+     make install` also installs the udev rules), then `.venv/bin/pip install -e ".[ul]"`.
+5. Check that the device is visible. If it has a different name, set `daq.device` to that name
+   (CompactDAQ: the chassis, and `ai_device`/`ao_device` to the modules; DT9837A: the unique ID,
+   needed only with several modules):
    ```
    vcactl list-devices
    ```
+6. Before connecting a shaker to a new DAQ, run the loopback self-test (see [Usage](#usage)).
 
 ## Configuration
 
@@ -60,7 +76,7 @@ specimen-specific profile):
 | Option | Directory | Default | Keys |
 |---|---|---|---|
 | `--shaker` | `config/shakers/` | required | `tv51110`, `tv52110`, `bk4809`, `bk4801_4812` |
-| `--daq` | `config/daq/` | `usb6211` | `usb6211`, `usb4431`, `pxie4468` |
+| `--daq` | `config/daq/` | `usb6211` | `usb6211`, `usb4431`, `pxie4468`, `cdaq9234_9260`, `cdaq9232_9263`, `dt9837a` |
 | `--sensor` | `config/sensors/` | `pcb356b18` | `pcb356b18` |
 | `--settings` | `config/settings/` | `default` | `default` |
 | `--profile` | `config/test_profiles/` | required | `low_g`, `flat`, `sloped`, `wideband`, `sine_sweep`, `stepped_sine`, `ringdown` |
@@ -133,6 +149,9 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
 | `usb6211` | 0.2, 1, 5, 10 | 10 | 20 MHz / n, ≤ 250 kS/s | no anti-aliasing filter: `decimation` ≥ 2 |
 | `usb4431` | 10 | 3.5 | 51.2 k, 80 k, 96 k ÷ 2ⁿ | IEPE 2.1 mA; shaker `max_drive_v` ≤ 3.5 |
 | `pxie4468` | 0.316 … 42.4 | 0.316, 1, 3.16, 10 | 100 S/s – 200 kS/s | IEPE 4/10/20 mA; the AO delay depends on the rate |
+| `cdaq9234_9260` | 5 | 4.24 | 51.2 kS/s ÷ n (n 1–31) | cDAQ-9174 + NI 9234 (IEPE 2 mA) + NI 9260; AO uses the AI timebase |
+| `cdaq9232_9263` | 30 | 10 | 102.4, 51.2, 25.6 kS/s ÷ n | cDAQ-9174 + NI 9232 (IEPE 4 mA) + NI 9263 (no reconstruction filter: `decimation` ≥ 2) |
+| `dt9837a` | 1, 10 | 10 | 10–52.734 kS/s | UL for Linux; IEPE 4 mA; AO 10 kHz output filter; AO lag about 0.5 s |
 
 - `conditioner_gain` (default 1) is the gain of an external IEPE conditioner between the sensor
   and AI (USB-6211).
@@ -142,9 +161,10 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
   covers the profile's f_hi. The band is the converter passband, `limits.passband_fraction` ×
   `fs_io_hz`, and, with `decimation` > 1, the passband of the rate-change FIR filter,
   0.6 × control Nyquist (0.3 × `fs_io_hz` / `decimation`). The pre-flight row
-  `profile f_hi <= DAQ band` shows it. The decimation is 1 on the USB-4431 and PXIe-4468
-  (their converters filter). On the USB-6211 it is the largest factor from 2 to 16 that still
-  covers the band and gives a whole-number control rate. A number in `fs_io_hz` or
+  `profile f_hi <= DAQ band` shows it. The decimation is 1 where both the AI and the AO
+  converters filter (USB-4431, PXIe-4468, `cdaq9234_9260`, DT9837A). Otherwise (USB-6211,
+  `cdaq9232_9263`) it is the largest factor from 2 to 16 that still covers the band and gives a
+  whole-number control rate. A number in `fs_io_hz` or
   `decimation` (in the DAQ file, or in `[daq]` of the settings file) fixes that value, and the
   other one is chosen around it.
 
@@ -153,6 +173,9 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
   | `usb6211` | 100, 125, 200, 250 kS/s | 100 kS/s, decimation 10 (10 kS/s control) | 37.5 kHz (250 kS/s, decimation 2) |
   | `usb4431` | the AO update rates, 1.25–96 kS/s | 10 kS/s, decimation 1 | 43.5 kHz (96 kS/s) |
   | `pxie4468` | 1.6, 3.2, … 102.4, 200 kS/s | 12.8 kS/s, decimation 1 | 90.8 kHz (200 kS/s) |
+  | `cdaq9234_9260` | 2.048, 2.56, … 25.6, 51.2 kS/s (51.2 k/n) | 10.24 kS/s, decimation 1 | 23.04 kHz (51.2 kS/s) |
+  | `cdaq9232_9263` | 51.2, 102.4 kS/s | 51.2 kS/s, decimation 5 (10.24 kS/s control) | 15.36 kHz (102.4 kS/s, decimation 2) |
+  | `dt9837a` | 51.2, 52.734 kS/s | 51.2 kS/s, decimation 1 | 23.9 kHz (52.734 kS/s) |
 
   - USB-6211: there is no analog anti-aliasing or reconstruction filter, so AI stays oversampled
     at ≥ 100 kS/s and only the decimation lowers the control rate. Response content up to
@@ -167,6 +190,33 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
   - PXIe-4468: the AO delay depends on the rate (65 samples at ≤ 10 kS/s up to 106 at
     200 kS/s). `limits.filter_delay_max_rate_hz` and `filter_delay_by_rate` hold the datasheet
     table.
+  - CompactDAQ: `device` is the chassis (`cDAQ1`, whose terminals route the clocks);
+    `ai_device` and `ao_device` are the modules (`cDAQ1Mod1`, `cDAQ1Mod2`): check the slots in
+    NI MAX.
+    - `cdaq9234_9260`: the two delta-sigma modules each have their own oscillator, so the AO
+      task takes the AI task's sample clock timebase (`ao_sync = "shared_timebase"`) and starts
+      on the AI start trigger. Delay 71 samples.
+    - `cdaq9232_9263`: the NI 9263 has no reconstruction filter, so, as on the USB-6211, the
+      drive is interpolated (decimation ≥ 2) and the I/O rate stays ≥ 51.2 kS/s. Its AO is
+      clocked from the NI 9232's sample clock. Delay 30–31 samples.
+
+    Both have only run in the simulator: run `vcactl loopback` before connecting a shaker.
+  - DT9837A:
+    - **Alignment:** UL for Linux starts AI and AO with separate commands. Every run therefore
+      begins with a 10 mV, 40 ms chirp on the AO, which the backend finds in the AO readback
+      channel to align the streams.
+    - **AO filter:** a 2-pole 10 kHz Butterworth (−3 dB at 10 kHz, −12 dB at 20 kHz). The loop
+      compensates it, but the drive limits apply before it: a flat test loses 0.8 / 3 / 6 / 9 dB
+      of level for bands to 10 / 15 / 20 / 23.9 kHz, and above 10 kHz the logged drive is the
+      value before the filter.
+    - **AO lag:** uldaq keeps the 8192-sample AO FIFO and 32 USB transfers full, so the output
+      runs about 0.5 s behind the data handed over (1.2 s at 10 kS/s). The rates therefore stay
+      ≥ 51.2 kS/s, and the AO queue is raised per run; the `rates` line shows it (8 half-frames,
+      0.64 s). About 0.6 s of drive still plays after an abort.
+    - **Sine:** the sine correction gain is scaled down for the longer loop. Sweeps through
+      resonances track less tightly: in the simulator 85 % of the half-frames are within 1 dB at
+      6 oct/min, against 98 % on the NI devices, and 96 % at 3 oct/min. Sweep at about half the
+      rate.
 - **Frame size.** `[control] frame_size = "auto"` (the default) is the smallest power of two
   with a line spacing Δf = control rate / `frame_size` of at most `control.line_spacing_hz`
   (6.25 Hz) and at most f_lo / 2 (the profile starts at ≥ 2 lines). A frame then lasts
@@ -177,8 +227,8 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
 - **Mismatches.** Before the pre-flight check, the profile band is compared with the shaker's
   and the sensor's frequency ranges, the DAQ's highest test frequency and a fixed frame size.
   Every mismatch is listed in one `configuration error`, and nothing is output.
-- Underflow errors (-200621/-200290) on a slow or busy PC: increase `daq.ao_queue_blocks`.
-  This adds latency.
+- Underflow errors (-200621/-200290, or `AO underrun` on the DT9837A) on a slow or busy PC:
+  increase `daq.ao_queue_blocks`. This adds latency.
 - **AI range.** `daq.ai_range_v = "auto"` (the default) picks, per run, the smallest range of
   the device that holds the expected AI peak at `--level` plus `safety.ai_range_margin_db`
   (3 dB) below `safety.ai_overload_fraction` (98 %) of the range. The expected peak is the
@@ -202,12 +252,15 @@ controller uses them as follows:
 
 - The sensitivity at the DAQ input is `sensitivity_mv_per_g` × `daq.conditioner_gain`. The
   conditioner gain (default 1) is for an external IEPE conditioner with gain (USB-6211).
-- The pre-flight check fails if the profile's band is outside the sensor's frequency range, or
-  if the expected acceleration peak exceeds `range_g_pk`. For random profiles the expected peak
-  is `safety.accel_crest_factor` (4.5) × rms; for sine profiles it is the sine peak.
+- A profile band outside the sensor's frequency range stops the run with a configuration
+  error. The pre-flight check fails if the expected acceleration peak exceeds `range_g_pk`. For
+  random profiles the expected peak is `safety.accel_crest_factor` (4.5) × rms; for sine
+  profiles it is the sine peak.
 - A test aborts when the measured peak exceeds `range_g_pk`.
 - With IEPE excitation from the DAQ, `daq.iepe_current_ma` must lie within the sensor's IEPE
-  range.
+  range. The sensor's highest output bias (`iepe_bias_max_v`) plus its swing at `range_g_pk`
+  must stay below the DAQ's IEPE compliance voltage (`limits.iepe_compliance_v`). For the
+  356B18: 12 V + 5.24 V = 17.2 V, within the DT9837A's 18 V and the NI 9234's 19 V.
 
 The AI range follows the expected peak automatically (see the DAQ notes above). Choose the
 accelerometer so that the expected peak also stays inside the input range of any other
@@ -219,9 +272,9 @@ closes the loop: z (1048 mV/g calibrated). The file also lists the x (980) and y
 calibrations. Notes:
 
 - It needs a 4-pin (1/4-28) to 3 × BNC breakout cable. Connect only the control axis.
-- The output carries an 8–12 V bias. Use AC coupling: IEPE from the USB-4431 (2.1 mA) or the
-  PXIe-4468 (4, 10 or 20 mA), or the AC-coupled output of an external conditioner on the
-  USB-6211.
+- The output carries an 8–12 V bias. Use AC coupling: IEPE from the DAQ (USB-4431 2.1 mA,
+  PXIe-4468 4/10/20 mA, NI 9234 2 mA, NI 9232 4 mA, DT9837A 4 mA), or the AC-coupled output of
+  an external conditioner on the USB-6211. The NI 9234's ±5 V input limits it to about 4.7 g.
 - Wait at least 12 s after switching on the IEPE excitation before starting a pretest; the
   output needs that long to settle.
 - 1 V/g leaves little room: a 0.55 g rms random test (`low_g.toml`) already peaks near
@@ -242,6 +295,12 @@ to the specimen. How it is powered depends on the DAQ:
   the USB-4431, 4, 10 or 20 mA on the PXIe-4468. IEPE needs `ai_coupling = "AC"`. Check that the
   accelerometer works at the chosen current (2.1 mA is below the 4 mA many sensors are specified at).
   Connect AO 0 to the amplifier input.
+- **cDAQ-9174:** connect the accelerometer to AI 0 of the NI 9234 (BNC) or NI 9232, and switch
+  on IEPE with `iepe_current_ma` (2 mA on the 9234, 4 mA on the 9232) and AC coupling. Connect
+  AO 0 of the NI 9260 (BNC) or of the NI 9263 (terminals AO0 and COM) to the amplifier input.
+  The NI 9263 drives at most 1 mA, so the amplifier input must be ≥ 10 kΩ.
+- **DT9837A:** connect the accelerometer to AI 0 (BNC), IEPE 4 mA with AC coupling, and AO 0
+  (BNC, ≥ 3.3 kΩ load) to the amplifier input.
 - **USB-6211:** it has no IEPE excitation, so an external IEPE signal conditioner powers the
   accelerometer and its output goes to the DAQ (wiring below). Leave the conditioner's output
   AC-coupled, so that the IEPE bias voltage does not reach the DC-coupled USB-6211 input.
@@ -253,7 +312,9 @@ to the specimen. How it is powered depends on the DAQ:
 | AI GND (pin 28) | if the conditioner output is **floating** (battery powered): 10–100 kΩ from AI 9 to AI GND |
 
 Power sequence, which matters because the USB-6211 AO glitches by about ±1 V for 200 ms at power-on
-(the USB-4431 AO also glitches at power-on):
+(the USB-4431 AO also glitches at power-on; the NI 9263 by −1.5 V for 20 µs at power-on and up to
+1.8 V at power-down; the NI 9260 by 400 mV at power-on, and it steps by 100 mV for 200 µs at the
+first output of every run):
 
 1. Connect the DAQ and let the PC enumerate it. Leave the **amplifier off**.
 2. Switch on the amplifier with its gain knob in the usual position. Keep the knob in the same
@@ -355,10 +416,11 @@ Examples: `stepped_sine.toml` and `ringdown.toml`. `--level` shifts every level;
 
 | Command | Purpose | Notes |
 |---|---|---|
-| `vcactl list-devices` | List NI-DAQmx devices. | Real DAQ backend only. |
+| `vcactl list-devices` | List NI-DAQmx and UL for Linux devices. | Real DAQ backend only. |
 | `vcactl check ...` | Run pre-flight checks only (no output drive). | Exits non-zero on failed checks. |
 | `vcactl pretest ...` | Measure noise floor + FRF at low level, then stop. | Useful hardware sanity check before `run`. |
 | `vcactl run ...` | Run a random or sine closed-loop test. | `--duration` applies to random profiles only. |
+| `vcactl loopback ...` | Self-test of a DAQ: AO looped back into a spare AI input, amplifier disconnected. | Delay, clock drift and gain; no shaker or profile. |
 
 Options of `check`, `pretest` and `run`
 (see [Configuration](#configuration) for the keys):
@@ -379,6 +441,17 @@ Only for `pretest` and `run`:
 
 Only for `run`: `--duration` sets the test duration at full level in s (random profiles; default
 from the profile).
+
+`loopback` drives low-level noise (`--level-v`, default 0.05 V rms) at the DAQ's highest
+automatic rate for `--duration` s (default 120) and reads it back on `--loopback-channel`
+(IEPE off, DC coupling). It reports the AO → AI delay at the start and the end, the drift
+between the AO and AI clocks, and the gain at a few frequencies. It FAILs when the drift
+exceeds 1 ppm or the delay differs from `limits.filter_delay_samples` by more than 2 samples.
+Disconnect the amplifier first; `--sim` runs it on the simulator.
+
+```
+vcactl loopback --daq cdaq9234_9260 --loopback-channel ai1
+```
 
 ```
 vcactl check   --shaker bk4809 --profile low_g [--level -6]
@@ -403,10 +476,11 @@ AO to 0 V.
 
 Recommended first test on hardware:
 
-1. Run `vcactl check ...` and fix any `FAIL`.
-2. Run `vcactl pretest ...` and check the SNR, the mean coherence and the predicted drive voltage.
-3. Run `vcactl run ... --level -12 --duration 10`.
-4. Run at full level.
+1. With a new DAQ: run `vcactl loopback ...` with the amplifier disconnected.
+2. Run `vcactl check ...` and fix any `FAIL`.
+3. Run `vcactl pretest ...` and check the SNR, the mean coherence and the predicted drive voltage.
+4. Run `vcactl run ... --level -12 --duration 10`.
+5. Run at full level.
 
 ## Safety
 
@@ -426,11 +500,13 @@ Recommended first test on hardware:
   - response over the shaker's random rating;
   - open loop (sensor or amplifier lost);
   - rms error or too many lines outside the abort band;
-  - any DAQmx error or warning (e.g. underflow, potential glitch).
+  - any DAQmx or UL error or warning (e.g. underflow, potential glitch).
 
   Every abort ends with ramp-down, 0 V and the tasks cleared. The drive already queued
-  (`ao_queue_blocks` + 1 half-frames, about 250–500 ms) still plays out before the ramp-down.
-  A DAQ fault stops immediately and writes 0 V.
+  (`ao_queue_blocks` + 1 half-frames, about 250–500 ms; about 0.7 s on the DT9837A) still plays
+  out before the ramp-down. A DAQ fault stops immediately and writes 0 V. On the DT9837A a
+  watchdog also stops the AO at 0 V if the controller stops writing, because a continuous UL
+  scan would otherwise replay old drive.
 - **Sine aborts:** response peak over the shaker's sine rating, open loop, amplitude error
   beyond `abort_db` for 3 half-frames (sweep and dwell), a step that does not settle within
   `max_settle_s`, a drive amplitude over `max_drive_v`, plus the random I/O aborts.
@@ -448,9 +524,20 @@ Recommended first test on hardware:
 - `cannot query NI-DAQmx: Could not find an installation of NI-DAQmx ...`:
   - The NI-DAQmx driver is missing: install it (Installation, step 4) and reboot.
   - Under WSL2 the driver cannot work; use `--sim`.
-- `no NI-DAQmx devices found`:
+- `cannot query UL for Linux: No module named 'uldaq'`: only needed for the DT9837A; install
+  libuldaq and the `ul` extra (Installation, step 4).
+- `no DAQ devices found`:
   - The driver works, but sees no device: check the USB/PXI connection and that the device
     appears in NI MAX, then rerun `vcactl list-devices`.
+- DT9837A:
+  - `no AO marker in the readback channel`: the AO did not start; check the USB connection.
+  - `AO underrun` or `the AO output lags ... behind`: the PC did not keep up, or the AO lag is
+    longer than expected; raise `limits.ao_transfer_s` (DAQ file) or `daq.ao_queue_blocks`.
+- `vcactl loopback` FAIL:
+  - delay error: correct `filter_delay_samples` in the DAQ file to the measured delay;
+  - drift: AO and AI are not on one clock (on `cdaq9234_9260`, the timebase sharing did not
+    work);
+  - no loopback signal: check the cable and `--loopback-channel`.
 - Pre-flight `FAIL` on profile checks:
   - Start with `--profile low_g` and `--level -12`.
   - Re-check the sensor range and the shaker's force and displacement limits.
@@ -472,9 +559,11 @@ Recommended first test on hardware:
   3 kHz band. The USB-4431 and PXIe-4468 have delta-sigma converters with built-in
   anti-aliasing. They run without decimation at the lowest rate whose passband covers the band.
   Their AO has its own sample clock from the same timebase and starts on `ai/StartTrigger`.
-  The converter filters delay the response by 65–106 samples (`limits.filter_delay_samples`;
-  per rate for the PXIe-4468), and the controller shifts the drive by that amount before
-  estimating the FRF. The frame size follows the control rate, so the line spacing is
+  On the cDAQ-9174, the NI 9260 takes the NI 9234's timebase, and the NI 9263 is clocked from
+  the NI 9232's sample clock; the DT9837A streams are aligned on its AO readback. The converter
+  filters delay the response by up to 106 samples (`limits.filter_delay_samples`; per
+  rate for the PXIe-4468 and the NI 9232), and the controller shifts the drive by that amount
+  before estimating the FRF. The frame size follows the control rate, so the line spacing is
   3.1–6.25 Hz and one loop step (half a frame) takes 80–160 ms at every rate, unless a low
   f_lo needs finer lines.
 - **Drive:** each frame gets new random phases. Frames are sqrt-Hann windowed and overlap-added
@@ -500,7 +589,8 @@ Recommended first test on hardware:
   control signal is demodulated with the drive phase (delayed by the same I/O delay as the
   FRF) and Hann-weighted. The scalar correction c (dB) is updated from the error with
   `sine.correction_gain`. The loop delay is about four half-frames, so gains above about 0.25
-  overshoot.
+  overshoot. With a longer AO queue (DT9837A: 8 half-frames) the gain is scaled by
+  4 / (queue + 2).
 - Frequency and amplitude change smoothly within each half-frame (log frequency, continuous
   phase); a level starts with a ramp of `sine.ramp_s` from `control.start_level_db` below it.
 - **Ring-down:** after the dwell the sine is cut at a zero crossing and the drive stays at
@@ -570,5 +660,6 @@ Layout:
 - `dsp/`: resampling and spectra.
 - `safety.py`: pre-flight (random and sine) and runtime monitors.
 - `rates.py`: DAQ rate and frame size per run, and the band compatibility check.
-- `daq/nidaq.py`, `daq/sim.py`: backends.
+- `daq/nidaq.py` (NI-DAQmx), `daq/ul.py` (UL for Linux, DT9837A), `daq/sim.py`: backends.
+- `loopback.py`: the loopback self-test.
 - `profile.py`, `config.py`, `logger.py`, `cli.py`.

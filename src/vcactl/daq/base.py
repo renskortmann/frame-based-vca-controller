@@ -11,6 +11,12 @@ class DaqFault(RuntimeError):
     """Hardware/driver failure (underflow, overflow, device removed). No ramp-down possible."""
 
 
+def channel_number(name: str) -> int:
+    """Number of a channel name such as ``ai1`` or ``ao0``."""
+    digits = name[len(name.rstrip("0123456789")):]
+    return int(digits) if digits else 0
+
+
 class DaqBackend(Protocol):
     fs_io: float
 

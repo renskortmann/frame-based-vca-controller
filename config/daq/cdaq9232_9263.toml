@@ -1,0 +1,67 @@
+# NI CompactDAQ cDAQ-9174 chassis with an NI 9232 (AI, 24-bit delta-sigma) and an NI 9263
+# (AO, 16-bit string DAC without reconstruction filter).
+# Values from Controller + DAQ/NI/cdaq-9174_2026-10-21-12-05-06.pdf,
+# ni-9232_specifications_2026-10-21-12-06-27.pdf and ni-9263_specifications_2026-10-21-12-08-25.pdf
+# in the Nextcloud project folder.
+# Select with --daq cdaq9232_9263.
+#
+# NI 9232: 3 AI, channel-to-earth isolated, pseudodifferential (AI- to isolated ground via
+# 50 ohm), fixed +/-30 V, IEPE 4 mA (compliance 22 V), AC (-3 dB at 0.1 Hz) or DC coupling.
+# NI 9263: 4 AO (COM = isolated ground), +/-10 V, 1 mA per channel: the amplifier input must be
+# >= 10 kohm. Without a reconstruction filter the drive is interpolated digitally (decimation
+# >= 2) and AI/AO run at >= 51.2 kS/s, so the zero-order-hold images lie far above the shaker
+# band. Power-on glitch -1.5 V for 20 us, power-down spike up to 1.8 V for 100 us (less with a
+# 10 kohm load): switch the amplifier on after the chassis, and off before it.
+# The AO is clocked from the AI task's sample clock (ao_sync = "sample_clock"; NI: the
+# non-delta-sigma module takes the delta-sigma module's clock). Untested on hardware: check the
+# delay with `vcactl loopback` before connecting a shaker.
+model = "NI cDAQ-9174 + NI 9232 + NI 9263"
+device = "cDAQ1"               # chassis name as shown by `vcactl list-devices` / NI MAX (terminals)
+ai_device = "cDAQ1Mod1"        # module (slot) of the NI 9232
+ao_device = "cDAQ1Mod2"        # module (slot) of the NI 9263
+ao_channel = "ao0"             # -> amplifier input (AO 0)
+ai_channel = "ai0"             # <- IEPE accelerometer or charge amplifier output (AI 0)
+ai_terminal_config = "PSEUDO_DIFF"
+ai_range_v = "auto"            # fixed +/-30 V ("auto" always gives 30)
+ai_coupling = "AC"             # AC or DC; AC is required with IEPE
+iepe_current_ma = 0.0          # 0 (off) or 4
+ao_range_v = 10.0              # fixed +/-10 V
+fs_io_hz = "auto"              # AI/AO rate: "auto" (the lowest of fs_io_auto_hz whose band covers
+                               # the profile) or a fixed data rate (see fs_allowed_hz)
+fs_io_auto_hz = [51200.0, 102400.0]
+decimation = "auto"            # control rate = fs_io_hz / decimation; "auto": the largest factor
+                               # from 2 to 16 (whole-number control rate) that covers the profile
+ao_queue_blocks = 2            # half-frames queued ahead in the AO buffer (latency vs. underrun margin)
+
+[limits]
+ai_ranges_v = [30.0]
+ao_ranges_v = [10.0]
+ai_terminal_configs = ["PSEUDO_DIFF"]
+ao_terminal_configs = []
+ai_couplings = ["AC", "DC"]
+iepe_currents_ma = [4.0]
+fs_min_hz = 984.615385         # 25.6 kS/s / 26
+fs_max_hz = 102400.0           # NI 9232 maximum (NI 9263: 3 us update time for one channel)
+# Data rates fM / (2 m n), fM = 13.1072 MHz, m = 64, 128, 256, n = 1 .. 26.
+fs_allowed_hz = [102400.0, 51200.0, 34133.33333, 25600.0, 20480.0, 17066.66667, 14628.57143,
+                 12800.0, 11377.77778, 10240.0, 9309.090909, 8533.333333, 7876.923077, 7314.285714,
+                 6826.666667, 6400.0, 6023.529412, 5688.888889, 5389.473684, 5120.0, 4876.190476,
+                 4654.545455, 4452.173913, 4266.666667, 4096.0, 3938.461538, 3657.142857,
+                 3413.333333, 3200.0, 3011.764706, 2844.444444, 2694.736842, 2560.0, 2438.095238,
+                 2327.272727, 2226.086957, 2133.333333, 2048.0, 1969.230769, 1828.571429,
+                 1706.666667, 1600.0, 1505.882353, 1422.222222, 1347.368421, 1280.0, 1219.047619,
+                 1163.636364, 1113.043478, 1066.666667, 1024.0, 984.615385]
+timebase_hz = 0.0
+antialias_filter = true        # delta-sigma ADC, alias-free to 0.4 fs, -120 dB from 0.5 fs
+ao_reconstruction_filter = false  # string DAC: images only attenuated by the zero-order hold
+driver = "nidaqmx"
+ao_sync = "sample_clock"       # AO is clocked from ai/SampleClock
+ao_on_demand = true
+iepe_compliance_v = 22.0
+# AI input delay (NI-DAQmx uses the highest decimation): 29/fs + 3 us at 51.2 kS/s (m = 128),
+# 30/fs + 3 us at 102.4 kS/s (m = 64); the AO update and settling (10-20 us) add about a sample.
+filter_delay_max_rate_hz = [51200.0, 102400.0]
+filter_delay_by_rate = [30.0, 31.0]
+filter_delay_samples = 31.0
+passband_fraction = 0.4        # AI passband: 0.4 fs (the AO has no filter)
+# Highest test frequency (0.3 * fs_io_hz / decimation): 15.36 kHz at 102.4 kS/s, decimation 2.

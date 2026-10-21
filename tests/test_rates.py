@@ -1,6 +1,7 @@
 """Automatic DAQ rate and frame size (vcactl.rates)."""
 
 import dataclasses
+import re
 
 import pytest
 
@@ -35,6 +36,15 @@ def wide(settings, shaker):
     ("pxie4468", "flat", 6400.0, 1, 1024),
     ("pxie4468", "low_g", 12800.0, 1, 2048),
     ("pxie4468", "wideband", 25600.0, 1, 4096),
+    ("cdaq9234_9260", "flat", 5120.0, 1, 1024),
+    ("cdaq9234_9260", "low_g", 10240.0, 1, 2048),
+    ("cdaq9234_9260", "wideband", 25600.0, 1, 4096),
+    ("cdaq9232_9263", "flat", 51200.0, 5, 2048),    # AO without reconstruction filter: R >= 2
+    ("cdaq9232_9263", "low_g", 51200.0, 5, 2048),
+    ("cdaq9232_9263", "wideband", 51200.0, 2, 4096),
+    ("dt9837a", "flat", 51200.0, 1, 8192),          # >= 51.2 kS/s: short AO lag
+    ("dt9837a", "low_g", 51200.0, 1, 8192),
+    ("dt9837a", "wideband", 51200.0, 1, 8192),
 ])
 def test_lowest_rate_that_fits(daq, profile, fs_io, R, N):
     st = load_settings(daq=daq, sensor=TEST_SENSOR)
@@ -53,13 +63,28 @@ def test_lowest_rate_that_fits(daq, profile, fs_io, R, N):
     ("usb6211", 37500.0, 250000.0, 2, 32768),
     ("usb4431", 0.453 * 96000, 96000.0, 1, 16384),
     ("pxie4468", 0.454 * 200000, 200000.0, 1, 32768),
+    ("cdaq9234_9260", 0.45 * 51200, 51200.0, 1, 8192),
+    ("cdaq9232_9263", 0.3 * 102400 / 2, 102400.0, 2, 8192),
+    ("dt9837a", 0.453 * 52734, 52734.0, 1, 16384),
 ])
 def test_highest_test_frequency(daq, f_max, fs_io, R, N, tmp_path):
     st, shaker = wide(load_settings(daq=daq, sensor=TEST_SENSOR), load_shaker("bk4809"))
     _, rates = resolve_rates(flat(tmp_path, 100.0, f_max), shaker, st)
     assert (rates.fs_io_hz, rates.decimation, rates.frame_size) == (fs_io, R, N)
-    with pytest.raises(ConfigError, match=f"highest test frequency of the {st.daq.model}"):
+    with pytest.raises(ConfigError, match="highest test frequency of the " + re.escape(st.daq.model)):
         resolve_rates(flat(tmp_path, 100.0, f_max * 1.001), shaker, st)
+
+
+def test_ao_queue_covers_the_driver_lag(tmp_path):
+    """DT9837A: uldaq holds 8192 + 0.4 s x fs AO samples ahead; the queue is raised to cover it."""
+    st = load_settings(daq="dt9837a", sensor=TEST_SENSOR)
+    resolved, rates = resolve_rates(load_profile(PROFILES / "low_g.toml"), load_shaker("bk4809"), st)
+    assert (rates.ao_queue_blocks, resolved.daq.ao_queue_blocks) == (8, 8)   # 28672 / 4096 + 1
+    assert rates.ao_queue_blocks * rates.frame_size / 2 > rates.ao_lead_samples
+    assert "AO queue 8 half-frames (0.64 s" in rates.format()
+    _, nidaq = resolve_rates(load_profile(PROFILES / "low_g.toml"), load_shaker("bk4809"),
+                             load_settings(sensor=TEST_SENSOR))
+    assert nidaq.ao_queue_blocks == 2 and "AO queue" not in nidaq.format()
 
 
 def test_usb6211_stays_oversampled_for_low_bands(tmp_path):

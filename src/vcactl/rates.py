@@ -5,13 +5,15 @@
 
 - I/O rate: the lowest of ``daq.fs_io_auto_hz`` (default ``limits.fs_allowed_hz``) whose band
   (``daq_band_max_hz``) covers the profile's f_hi.
-- Decimation: 1 on devices with an anti-aliasing filter (no FIR rate change needed); otherwise
-  the largest factor from 2 to ``MAX_DECIMATION`` that still covers f_hi and gives a whole-number
-  control rate.
+- Decimation: 1 on devices with an AI anti-aliasing and an AO reconstruction filter (no FIR rate
+  change needed); otherwise the largest factor from 2 to ``MAX_DECIMATION`` that still covers
+  f_hi and gives a whole-number control rate.
 - Frame size: the smallest power of two (>= ``MIN_FRAME_SIZE``) with a line spacing of at most
   ``control.line_spacing_hz`` and at most f_lo / 2 (the profile starts at >= 2 lines). The
   frame duration, and with it the loop timing (averaging, frames-per-level limits, pretest
   length, abort reaction), then stays about the same at every rate.
+- AO queue: ``daq.ao_queue_blocks``, raised to cover the AO data a driver keeps ahead of the
+  output (``limits.ao_lead_samples``, DT9837A with uldaq) plus one half-frame.
 
 Before that, the profile band is checked against the shaker, the sensor and the DAQ, and every
 mismatch is reported in one ConfigError.
@@ -20,6 +22,7 @@ mismatch is reported in one ConfigError.
 from __future__ import annotations
 
 import dataclasses
+import math
 from dataclasses import dataclass
 
 from .config import ConfigError, DaqConfig, Settings, ShakerConfig, daq_band_max_hz
@@ -38,6 +41,8 @@ class RateChoice:
     band_max_hz: float          # highest test frequency at these rates
     line_spacing_hz: float
     auto: tuple[str, ...]       # the values chosen by resolve_rates, not set by hand
+    ao_queue_blocks: int = 2    # half-frames queued ahead on AO
+    ao_lead_samples: int = 0    # AO samples the driver keeps ahead of the output (uldaq)
 
     @property
     def fs_control_hz(self) -> float:
@@ -50,9 +55,14 @@ class RateChoice:
             how = "auto"
         else:
             how = "auto: " + ", ".join(self.auto)
-        return (f"I/O {_rate(self.fs_io_hz)}, decimation {self.decimation}, control "
+        text = (f"I/O {_rate(self.fs_io_hz)}, decimation {self.decimation}, control "
                 f"{_rate(self.fs_control_hz)}, frame {self.frame_size} "
                 f"(df {self.line_spacing_hz:.3g} Hz), band to {_freq(self.band_max_hz)} ({how})")
+        if self.ao_lead_samples:
+            queue_s = self.ao_queue_blocks * self.frame_size / 2 / self.fs_control_hz
+            text += (f", AO queue {self.ao_queue_blocks} half-frames ({queue_s:.2f} s; the driver "
+                     f"holds {self.ao_lead_samples / self.fs_io_hz:.2f} s ahead)")
+        return text
 
 
 def _rate(fs: float) -> str:
@@ -91,7 +101,7 @@ def decimation_candidates(daq: DaqConfig, fs_io_hz: float) -> list[int]:
     """Decimation factors to try at ``fs_io_hz``, largest (lowest control rate) first."""
     if not isinstance(daq.decimation, str):
         return [daq.decimation]
-    if daq.limits.antialias_filter:
+    if daq.limits.antialias_filter and daq.limits.ao_reconstruction_filter:
         return [1]
     return [r for r in range(MAX_DECIMATION, 1, -1)
             if abs(fs_io_hz / r - round(fs_io_hz / r)) < 1e-6]
@@ -163,7 +173,11 @@ def resolve_rates(profile: Profile | SineProfile, shaker: ShakerConfig,
     fs_io, r, n, band = choice
     auto = tuple(name for name, v in (("fs_io_hz", d.fs_io_hz), ("decimation", d.decimation),
                                       ("frame_size", c.frame_size)) if isinstance(v, str))
-    resolved = dataclasses.replace(settings,
-                                   daq=dataclasses.replace(d, fs_io_hz=fs_io, decimation=r),
-                                   control=dataclasses.replace(c, frame_size=n))
-    return resolved, RateChoice(fs_io, r, n, band, fs_io / r / n, auto)
+    lead = d.limits.ao_lead_samples(fs_io)
+    queue = d.ao_queue_blocks
+    if lead:
+        queue = max(queue, math.ceil(lead / (n // 2 * r)) + 1)
+    resolved = dataclasses.replace(
+        settings, daq=dataclasses.replace(d, fs_io_hz=fs_io, decimation=r, ao_queue_blocks=queue),
+        control=dataclasses.replace(c, frame_size=n))
+    return resolved, RateChoice(fs_io, r, n, band, fs_io / r / n, auto, queue, lead)
