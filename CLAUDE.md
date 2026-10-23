@@ -98,7 +98,7 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   datasheet table, and `filter_delay_samples` applies above its last rate.
 - Rates and frame size are chosen per run by `rates.resolve_rates` (called by the CLI before the
   backend is created; the controller and both backends refuse settings that are still "auto"):
-  - I/O rate: the lowest of `daq.fs_io_auto_hz` (USB-4431: `limits.fs_allowed_hz`) whose band
+  - I/O rate: the lowest of `daq.fs_io_auto_hz` (USB-4431: only 51.2 kS/s) whose band
     covers the profile's f_hi. Band (`config.daq_band_max_hz`, `Settings.f_band_max_hz`):
     `limits.passband_fraction` x `fs_io_hz` (0.5 USB-6211, 0.453 USB-4431, 0.454 PXIe-4468)
     and, with `decimation` > 1, 0.3 x control rate (the FIR passband).
@@ -110,7 +110,12 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
     tuned at every rate. This choice (lowest rate; df kept near 6 Hz) is the user's.
   - Band mismatches (profile against the shaker, the sensor, the DAQ maximum and a fixed
     frame size) are one ConfigError. Highest test frequency with the DAQ as the only limit:
-    USB-6211 37.5 kHz, USB-4431 43.5 kHz, PXIe-4468 90.8 kHz.
+    USB-6211 37.5 kHz, USB-4431 23.2 kHz (43.5 kHz at 96 kS/s), PXIe-4468 90.8 kHz.
+  - USB-4431 fixed at 51.2 kS/s (`fs_io_auto_hz = [51200]`, user's choice 2026-10-23): a change
+    of AI rate or AO base rate makes the AO jump (datasheet "AO Transients"). A pretest at
+    10 kS/s after a 96 kS/s loopback aborted on a 10.5 V AI overload in the noise-floor
+    blocks (zero drive); rerun at the same rate it passed. Tests that need the rate choice
+    among all AO rates pass `fs_io_auto_hz = ()` (`test_rates.all_ao_rates`).
   - Decimation 1 (now the DSA default) has run only in the simulator. Tests that need exact
     numbers pin the old fixed rates with `conftest.pin_rates`.
 - The simulator discretizes the shaker model with a bilinear transform at fs_io. At low DSA
@@ -121,8 +126,12 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   `v_per_g`, + `ai_range_margin_db`). The controller passes it to `backend.start(prefill,
   ai_range_v)` and the `RuntimeMonitor`; `daq.ai_range_v` itself may still be "auto". One range
   per run, so the pretest probes at -20 dB and lowers its drive to stay within half the range.
-- The DSA profiles are untested on hardware. The AI/AO start-trigger sync, coupling and IEPE
-  settings follow the datasheets and the nidaqmx API but have only run against the simulator.
+- The DSA profiles are untested on hardware, except the USB-4431 loopback (serial 1DFD63D,
+  NI-DAQmx 26.5.0, 2026-10-23): start-trigger sync gives 0 ppm drift and flat gain. Its
+  measured delay replaced the datasheet sum (39 + 63.3 = 102, off by 40 samples at 96 kS/s):
+  the ADC adds 39 samples at every rate (DAQmx `ai_remove_filter_delay` is False), the DAC
+  23-64 samples depending on the AO divider n. The PXIe-4468 comment says its driver
+  compensates the AI delay; unverified. Coupling, IEPE and control runs are still untested.
 - Decimation 1 needs both an AI anti-aliasing and an AO reconstruction filter
   (`limits.antialias_filter`, `ao_reconstruction_filter`); otherwise the FIR interpolates the
   drive (USB-6211, NI 9263).

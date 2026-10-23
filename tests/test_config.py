@@ -156,6 +156,9 @@ def test_dsa_profiles():
     usb4431, pxie4468 = load_settings(daq="usb4431").daq, load_settings(daq="pxie4468").daq
     assert usb4431.ao_range_v == 3.5 and usb4431.fs_io_hz == usb4431.decimation == "auto"
     assert pxie4468.limits.ai_ranges_v[0] == 0.316 and pxie4468.limits.fs_max_hz == 200000
+    # USB-4431 delay, measured per AO divider n (rate fM / n)
+    assert [usb4431.limits.filter_delay_at(fs) for fs in (1250, 3000, 10000, 20000, 25600, 51200,
+                                                          96000)] ==         [103.25, 102.8, 98.85, 93.6, 83.05, 62.1, 62.1]
 
 
 @pytest.mark.parametrize("daq,fs_io_hz,decimation,f_max", [

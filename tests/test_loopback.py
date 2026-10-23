@@ -10,7 +10,7 @@ from vcactl.loopback import loopback_settings, run_loopback
 
 @pytest.mark.parametrize("daq,fs,delay", [
     ("usb6211", 250000.0, 0.0),
-    ("usb4431", 96000.0, 102.0),
+    ("usb4431", 51200.0, 62.0),                 # 62.1, rounded by the simulator
     ("pxie4468", 200000.0, 106.0),
     ("cdaq9234_9260", 51200.0, 71.0),
     ("cdaq9232_9263", 102400.0, 31.0),

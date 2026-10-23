@@ -157,7 +157,7 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
   and AI (USB-6211).
 - **Rates.** `fs_io_hz` and `decimation` are `"auto"` in every DAQ file: each run chooses them
   from the profile band, and `check`, `pretest` and `run` print the choice on the `rates` line.
-  The I/O rate is the lowest of `daq.fs_io_auto_hz` (USB-4431: its AO update rates) whose band
+  The I/O rate is the lowest of `daq.fs_io_auto_hz` (USB-4431: only 51.2 kS/s) whose band
   covers the profile's f_hi. The band is the converter passband, `limits.passband_fraction` ×
   `fs_io_hz`, and, with `decimation` > 1, the passband of the rate-change FIR filter,
   0.6 × control Nyquist (0.3 × `fs_io_hz` / `decimation`). The pre-flight row
@@ -171,7 +171,7 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
   | `--daq` | `fs_io_auto_hz` | `low_g` (20–3000 Hz) gets | Highest test frequency |
   |---|---|---|---|
   | `usb6211` | 100, 125, 200, 250 kS/s | 100 kS/s, decimation 10 (10 kS/s control) | 37.5 kHz (250 kS/s, decimation 2) |
-  | `usb4431` | the AO update rates, 1.25–96 kS/s | 10 kS/s, decimation 1 | 43.5 kHz (96 kS/s) |
+  | `usb4431` | 51.2 kS/s | 51.2 kS/s, decimation 1 | 23.2 kHz (51.2 kS/s) |
   | `pxie4468` | 1.6, 3.2, … 102.4, 200 kS/s | 12.8 kS/s, decimation 1 | 90.8 kHz (200 kS/s) |
   | `cdaq9234_9260` | 2.048, 2.56, … 25.6, 51.2 kS/s (51.2 k/n) | 10.24 kS/s, decimation 1 | 23.04 kHz (51.2 kS/s) |
   | `cdaq9232_9263` | 51.2, 102.4 kS/s | 51.2 kS/s, decimation 5 (10.24 kS/s control) | 15.36 kHz (102.4 kS/s, decimation 2) |
@@ -190,6 +190,14 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
   - PXIe-4468: the AO delay depends on the rate (65 samples at ≤ 10 kS/s up to 106 at
     200 kS/s). `limits.filter_delay_max_rate_hz` and `filter_delay_by_rate` hold the datasheet
     table.
+  - USB-4431: the delay depends on the AO rate divider n (rate = 51.2, 80 or 96 kHz ÷ n): 62.1
+    samples at n = 1 (≥ 51.2 kS/s) up to 103.25 at n = 64. The datasheet gives only the 63.3-sample
+    DAC maximum, so the table in `usb4431.toml` was measured with `vcactl loopback` (2026-10-23).
+  - USB-4431: the AO jumps when the AI rate or the AO base rate (51.2, 80 or 96 kHz) changes
+    (datasheet, "AO Transients"). With the amplifier on, this kicked the shaker at the start of
+    a pretest after a loopback at another rate, and the overload monitor aborted. The profile
+    therefore uses 51.2 kS/s for every run and for the loopback. If you set another rate
+    (`fs_io_auto_hz`, `fs_io_hz`), switch the amplifier off for the first run after a change.
   - CompactDAQ: `device` is the chassis (`cDAQ1`, whose terminals route the clocks);
     `ai_device` and `ao_device` are the modules (`cDAQ1Mod1`, `cDAQ1Mod2`): check the slots in
     NI MAX.
@@ -307,9 +315,10 @@ to the specimen. How it is powered depends on the DAQ:
 
 - **USB-4431 / PXIe-4468:** connect the accelerometer directly to AI 0 (BNC) and switch on the
   DAQ's IEPE excitation with `iepe_current_ma` in the DAQ profile (`config/daq/*.toml`): 2.1 mA on
-  the USB-4431, 4, 10 or 20 mA on the PXIe-4468. IEPE needs `ai_coupling = "AC"`. Check that the
-  accelerometer works at the chosen current (2.1 mA is below the 4 mA many sensors are specified at).
-  Connect AO 0 to the amplifier input.
+  the USB-4431 (on in `usb4431.toml`), 4, 10 or 20 mA on the PXIe-4468. IEPE needs
+  `ai_coupling = "AC"`. Check that the accelerometer works at the chosen current (2.1 mA is below
+  the 4 mA many sensors are specified at; the PCB 352B and 356B18 take 2–20 mA). With a charge
+  amplifier on the USB-4431, set `iepe_current_ma = 0`. Connect AO 0 to the amplifier input.
 - **cDAQ-9174:** connect the accelerometer to AI 0 of the NI 9234 (BNC) or NI 9232, and switch
   on IEPE with `iepe_current_ma` (2 mA on the 9234, 4 mA on the 9232) and AC coupling. Connect
   AO 0 of the NI 9260 (BNC) or of the NI 9263 (terminals AO0 and COM) to the amplifier input.
@@ -327,7 +336,7 @@ to the specimen. How it is powered depends on the DAQ:
 | AI GND (pin 28) | if the conditioner output is **floating** (battery powered): 10–100 kΩ from AI 9 to AI GND |
 
 Power sequence, which matters because the USB-6211 AO glitches by about ±1 V for 200 ms at power-on
-(the USB-4431 AO also glitches at power-on; the NI 9263 by −1.5 V for 20 µs at power-on and up to
+(the USB-4431 AO also glitches at power-on and when its rate changes; the NI 9263 by −1.5 V for 20 µs at power-on and up to
 1.8 V at power-down; the NI 9260 by 400 mV at power-on, and it steps by 100 mV for 200 µs at the
 first output of every run):
 
@@ -577,7 +586,7 @@ Recommended first test on hardware:
   On the cDAQ-9174, the NI 9260 takes the NI 9234's timebase, and the NI 9263 is clocked from
   the NI 9232's sample clock; the DT9837A streams are aligned on its AO readback. The converter
   filters delay the response by up to 106 samples (`limits.filter_delay_samples`; per
-  rate for the PXIe-4468 and the NI 9232), and the controller shifts the drive by that amount
+  rate for the PXIe-4468, the USB-4431 and the NI 9232), and the controller shifts the drive by that amount
   before estimating the FRF. The frame size follows the control rate, so the line spacing is
   3.1–6.25 Hz and one loop step (half a frame) takes 80–160 ms at every rate, unless a low
   f_lo needs finer lines.

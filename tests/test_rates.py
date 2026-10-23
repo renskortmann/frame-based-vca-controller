@@ -30,9 +30,9 @@ def wide(settings, shaker):
     ("usb6211", "flat", 100000.0, 10, 2048),       # flat 20-2000 Hz
     ("usb6211", "low_g", 100000.0, 10, 2048),      # 20-3000 Hz
     ("usb6211", "wideband", 100000.0, 4, 4096),    # 20-7000 Hz: the rates used before
-    ("usb4431", "flat", 5000.0, 1, 1024),
-    ("usb4431", "low_g", 10000.0, 1, 2048),
-    ("usb4431", "wideband", 20000.0, 1, 4096),
+    ("usb4431", "flat", 51200.0, 1, 8192),          # one rate: no AO transient between runs
+    ("usb4431", "low_g", 51200.0, 1, 8192),
+    ("usb4431", "wideband", 51200.0, 1, 8192),
     ("pxie4468", "flat", 6400.0, 1, 1024),
     ("pxie4468", "low_g", 12800.0, 1, 2048),
     ("pxie4468", "wideband", 25600.0, 1, 4096),
@@ -61,7 +61,7 @@ def test_lowest_rate_that_fits(daq, profile, fs_io, R, N):
 
 @pytest.mark.parametrize("daq,f_max,fs_io,R,N", [
     ("usb6211", 37500.0, 250000.0, 2, 32768),
-    ("usb4431", 0.453 * 96000, 96000.0, 1, 16384),
+    ("usb4431", 0.453 * 51200, 51200.0, 1, 8192),
     ("pxie4468", 0.454 * 200000, 200000.0, 1, 32768),
     ("cdaq9234_9260", 0.45 * 51200, 51200.0, 1, 8192),
     ("cdaq9232_9263", 0.3 * 102400 / 2, 102400.0, 2, 8192),
@@ -116,8 +116,13 @@ def test_fixed_io_rate_auto_decimation():
     assert rates.format().endswith("(auto: decimation, frame_size)")
 
 
+def all_ao_rates(st):
+    """USB-4431 choosing from all its AO update rates (limits.fs_allowed_hz), not only 51.2 kS/s."""
+    return dataclasses.replace(st, daq=dataclasses.replace(st.daq, fs_io_auto_hz=()))
+
+
 def test_fixed_decimation_auto_io_rate():
-    st = load_settings(daq="usb4431", sensor=TEST_SENSOR)
+    st = all_ao_rates(load_settings(daq="usb4431", sensor=TEST_SENSOR))
     st = dataclasses.replace(st, daq=dataclasses.replace(st.daq, decimation=2))
     _, rates = resolve_rates(load_profile(PROFILES / "low_g.toml"), load_shaker("bk4809"), st)
     # decimation 2: 0.3 * fs / 2 >= 3 kHz needs fs >= 20 kS/s
@@ -143,7 +148,7 @@ def test_frame_size_follows_f_lo(tmp_path):
 
 
 def test_sine_profiles(tmp_path):
-    st = load_settings(daq="usb4431", sensor=TEST_SENSOR)
+    st = all_ao_rates(load_settings(daq="usb4431", sensor=TEST_SENSOR))
     _, rates = resolve_rates(load_profile(PROFILES / "sine_sweep.toml"),
                              load_shaker("tv51110"), st)
     assert rates.fs_io_hz == 5000.0                # sweep to 2 kHz

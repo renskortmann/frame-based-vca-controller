@@ -1,7 +1,10 @@
-# Wide-range test accelerometer, so that the tests are not limited by the PCB 356B18's
-# +/-5 g and 3 kHz.
+# Wide-range test accelerometer, so that the tests are not limited by the PCB sensors' +/-5 g
+# and 3 or 10 kHz. IEPE 2-20 mA like the PCB sensors, so that it works with DAQ files that
+# switch the excitation on (usb4431); no bias, so the compliance check is skipped.
 name = "test accelerometer"
 sensitivity_mv_per_g = 10.0
 range_g_pk = 500.0
 f_min_hz = 1.0
 f_max_hz = 10000.0
+iepe_min_ma = 2.0
+iepe_max_ma = 20.0
