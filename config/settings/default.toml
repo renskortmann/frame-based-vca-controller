@@ -1,6 +1,6 @@
 # Test settings: control, safety and pretest settings (independent of shaker, DAQ and sensor).
 # The control accelerometer comes from the sensor file chosen with --sensor
-# (config/sensors/*.toml, default pcb356b18).
+# (config/sensors/*.toml, default pcb352b).
 
 # DAQ settings come from the device profile chosen with --daq (config/daq/*.toml, default
 # usb6211). DAQ settings can be overridden here, for example:
@@ -51,7 +51,8 @@ abort_rampdown_s = 0.05
 
 [pretest]
 drive_rms_v = 0.01             # flat noise drive level for FRF estimation (V rms); 0.01 keeps
-                               # the pretest within +/-5 g of the PCB 356B18 on every shaker
+                               # the pretest within +/-5 g of the PCB 352B and 356B18 on
+                               # every shaker
 frames = 40
 noise_blocks = 6               # blocks with zero drive for noise-floor measurement
 min_snr_db = 10.0              # response must exceed the noise floor by this much

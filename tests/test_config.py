@@ -141,11 +141,11 @@ def test_driver_limits_validated(daq, changes, match):
 
 
 def test_iepe_compliance():
-    """PCB 356B18: 12 V bias + 5.24 V at 5 g = 17.2 V, within the DT9837A's 18 V."""
+    """PCB 352B: 11.1 V bias + 4.86 V at 5 g = 16.0 V, within the DT9837A's 18 V."""
     st = load_settings(daq="dt9837a")
     on = dataclasses.replace(st, daq=dataclasses.replace(st.daq, iepe_current_ma=4.0))
     validate_settings(on)
-    high = dataclasses.replace(on, sensor=dataclasses.replace(on.sensor, iepe_bias_max_v=13.0))
+    high = dataclasses.replace(on, sensor=dataclasses.replace(on.sensor, iepe_bias_max_v=14.0))   # datasheet
     with pytest.raises(ConfigError, match="compliance voltage 18 V"):
         validate_settings(high)
     off = dataclasses.replace(high, daq=dataclasses.replace(high.daq, iepe_current_ma=0.0))
@@ -249,8 +249,18 @@ def test_missing_daq_profile():
         load_settings(daq="usb9999")
 
 
-def test_pcb356b18_is_default_sensor():
+def test_pcb352b_is_default_sensor():
     st = load_settings()
+    sn = st.sensor
+    assert sn.name.startswith("PCB 352B") and sn.sensitivity_mv_per_g == 972.0      # calibrated
+    assert (sn.range_g_pk, sn.f_min_hz, sn.f_max_hz, sn.mass_kg) == (5.0, 2.0, 10000.0, 0.025)
+    assert (sn.iepe_min_ma, sn.iepe_max_ma, sn.iepe_bias_max_v) == (2.0, 20.0, 11.1)
+    assert st.v_per_g == pytest.approx(0.972)
+    assert st.payload_total_kg == pytest.approx(st.safety.payload_kg + 0.025)
+
+
+def test_pcb356b18_sensor():
+    st = load_settings(sensor="pcb356b18")
     sn = st.sensor
     assert sn.name.startswith("PCB 356B18") and sn.sensitivity_mv_per_g == 1048.0   # z axis
     assert (sn.range_g_pk, sn.f_min_hz, sn.f_max_hz, sn.mass_kg) == (5.0, 0.5, 3000.0, 0.025)
@@ -262,7 +272,7 @@ def test_pcb356b18_is_default_sensor():
 def test_conditioner_gain(tmp_path):
     p = tmp_path / "settings.toml"
     p.write_text("[daq]\nconditioner_gain = 2.0\n")
-    assert load_settings(p).v_per_g == pytest.approx(2.096)
+    assert load_settings(p).v_per_g == pytest.approx(1.944)
 
 
 def test_sensor_table_in_settings_rejected(tmp_path):
@@ -281,7 +291,7 @@ def test_iepe_current_checked_against_sensor():
     st = load_settings(daq="usb4431")
     on = dataclasses.replace(st, daq=dataclasses.replace(st.daq, iepe_current_ma=2.1,
                                                          ai_coupling="AC"))
-    validate_settings(on)                       # 2.1 mA is inside the 356B18's 2-20 mA
+    validate_settings(on)                       # 2.1 mA is inside the 352B's 2-20 mA
     with pytest.raises(ConfigError, match="outside"):
         validate_settings(dataclasses.replace(on, sensor=dataclasses.replace(
             on.sensor, iepe_min_ma=4.0)))
@@ -311,8 +321,8 @@ def test_settings_key(tmp_path):
     for kind in ("daq", "sensors"):
         (tmp_path / kind).mkdir()
     (tmp_path / "daq" / "usb6211.toml").write_text(open("config/daq/usb6211.toml").read())
-    (tmp_path / "sensors" / "pcb356b18.toml").write_text(
-        open("config/sensors/pcb356b18.toml").read())
+    (tmp_path / "sensors" / "pcb352b.toml").write_text(
+        open("config/sensors/pcb352b.toml").read())
     assert load_settings(config_dir=tmp_path).pretest.drive_rms_v == 0.02
 
 

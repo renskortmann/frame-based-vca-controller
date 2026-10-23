@@ -1,5 +1,5 @@
 # NI USB-6211 multifunction DAQ (16-bit SAR ADC, no anti-aliasing filter).
-# Values from Controller + DAQ/NI/usb-6211_specifications_2026-09-28-13-21-50.pdf
+# Values from Controller + DAQ + accellerometers/NI/usb-6211_specifications_2026-09-28-13-21-50.pdf
 # in the Nextcloud project folder.
 # Select with --daq usb6211 (the default).
 model = "NI USB-6211"

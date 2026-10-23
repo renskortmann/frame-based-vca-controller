@@ -32,9 +32,9 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--daq", default="usb6211",
                    help="DAQ device key (usb6211, usb4431, pxie4468, cdaq9234_9260, cdaq9232_9263, "
                         "dt9837a) or path to a DAQ TOML file (default usb6211)")
-    p.add_argument("--sensor", default="pcb356b18",
-                   help="control accelerometer key (pcb356b18) or path to a sensor TOML file "
-                        "(default pcb356b18)")
+    p.add_argument("--sensor", default="pcb352b",
+                   help="control accelerometer key (pcb352b, pcb356b18) or path to a sensor TOML "
+                        "file (default pcb352b)")
     p.add_argument("--settings", "--station", dest="settings", default="default",
                    help="settings key (default) or path to a settings TOML file (default: default)")
     p.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR,
@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
                         "cdaq9232_9263, dt9837a) or path to a DAQ TOML file (default usb6211)")
     p.add_argument("--loopback-channel", required=True,
                    help="AI channel wired to the AO, for example ai1 (IEPE off, DC coupling)")
-    p.add_argument("--sensor", default="pcb356b18", help=argparse.SUPPRESS)
+    p.add_argument("--sensor", default="pcb352b", help=argparse.SUPPRESS)
     p.add_argument("--settings", "--station", dest="settings", default="default",
                    help="settings key or path (default: default)")
     p.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR)

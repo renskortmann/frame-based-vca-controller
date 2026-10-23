@@ -1,6 +1,6 @@
 # NI CompactDAQ cDAQ-9174 chassis with an NI 9234 (AI) and an NI 9260 (AO), both 24-bit
 # delta-sigma C Series modules.
-# Values from Controller + DAQ/NI/cdaq-9174_2026-10-21-12-05-06.pdf,
+# Values from Controller + DAQ + accellerometers/NI/cdaq-9174_2026-10-21-12-05-06.pdf,
 # ni-9234_specifications_2026-10-21-12-12-09.pdf and ni-9260_specifications_2026-10-21-12-52-43.pdf
 # in the Nextcloud project folder.
 # Select with --daq cdaq9234_9260.

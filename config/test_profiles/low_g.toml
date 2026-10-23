@@ -1,5 +1,6 @@
 # Flat random profile, 0.55 g rms (about 2.5 g peak at 4.5 sigma): low-level test within the
-# +/-5 g range and 3 kHz band of the PCB 356B18 (--sensor pcb356b18).
+# +/-5 g range of the PCB 352B (the default sensor) and the 3 kHz band of the PCB 356B18
+# (--sensor pcb356b18).
 name = "Flat 20-3000 Hz, 0.0001 g2/Hz"
 duration_s = 60.0
 

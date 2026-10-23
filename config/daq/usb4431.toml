@@ -1,5 +1,5 @@
 # NI USB-4431 dynamic signal acquisition device (24-bit delta-sigma AI and AO, 4 AI, 1 AO).
-# Values from Controller + DAQ/NI/NI-USB-443x-specifications.pdf
+# Values from Controller + DAQ + accellerometers/NI/NI-USB-443x-specifications.pdf
 # in the Nextcloud project folder.
 # Select with --daq usb4431.
 #

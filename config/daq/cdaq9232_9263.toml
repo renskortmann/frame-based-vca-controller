@@ -1,6 +1,6 @@
 # NI CompactDAQ cDAQ-9174 chassis with an NI 9232 (AI, 24-bit delta-sigma) and an NI 9263
 # (AO, 16-bit string DAC without reconstruction filter).
-# Values from Controller + DAQ/NI/cdaq-9174_2026-10-21-12-05-06.pdf,
+# Values from Controller + DAQ + accellerometers/NI/cdaq-9174_2026-10-21-12-05-06.pdf,
 # ni-9232_specifications_2026-10-21-12-06-27.pdf and ni-9263_specifications_2026-10-21-12-08-25.pdf
 # in the Nextcloud project folder.
 # Select with --daq cdaq9232_9263.

@@ -36,11 +36,13 @@ def test_incompatible_profile_is_a_config_error(tmp_path, capsys):
     p = tmp_path / "to5k.toml"
     p.write_text("breakpoints = [{ f_hz = 20.0, psd_g2_hz = 1e-5 }, "
                  "{ f_hz = 5000.0, psd_g2_hz = 1e-5 }]\n")
-    assert main(["check", "--shaker", "bk4809", "--profile", str(p)]) == 2   # PCB 356B18: 3 kHz
+    args = ["check", "--shaker", "bk4809", "--profile", str(p)]
+    assert main(args + ["--sensor", "pcb356b18"]) == 2                     # 356B18: 3 kHz
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "configuration error: the profile (20-5000 Hz) does not fit" in captured.err
     assert "f_max 3000 Hz of the sensor (PCB 356B18" in captured.err
+    assert main(args) == 0                                                 # 352B: 10 kHz
 
 
 def test_config_error_exit_code(capsys):
@@ -90,10 +92,10 @@ def test_unknown_profile_key(capsys):
 def test_check_ai_range(capsys):
     args = ["check", "--shaker", "bk4809", "--profile", "low_g"]
     assert main(args) == 0
-    assert "AI range +/-5 V (auto; expected peak 2.57 V)" in capsys.readouterr().out
+    assert "AI range +/-5 V (auto; expected peak 2.39 V)" in capsys.readouterr().out
     assert main(args + ["--level", "-12"]) == 0
     assert "AI range +/-1 V (auto" in capsys.readouterr().out
-    assert main(args + ["--ai-range", "1"]) == 2          # 2.57 V + 3 dB does not fit 1 V
+    assert main(args + ["--ai-range", "1"]) == 2          # 2.39 V + 3 dB does not fit 1 V
     out = capsys.readouterr().out
     assert "AI range +/-1 V (manual" in out and "FAIL" in out
     assert main(args + ["--ai-range", "2"]) == 2          # not a USB-6211 range

@@ -77,7 +77,7 @@ specimen-specific profile):
 |---|---|---|---|
 | `--shaker` | `config/shakers/` | required | `tv51110`, `tv52110`, `bk4809`, `bk4801_4812` |
 | `--daq` | `config/daq/` | `usb6211` | `usb6211`, `usb4431`, `pxie4468`, `cdaq9234_9260`, `cdaq9232_9263`, `dt9837a` |
-| `--sensor` | `config/sensors/` | `pcb356b18` | `pcb356b18` |
+| `--sensor` | `config/sensors/` | `pcb352b` | `pcb352b`, `pcb356b18` |
 | `--settings` | `config/settings/` | `default` | `default` |
 | `--profile` | `config/test_profiles/` | required | `low_g`, `flat`, `sloped`, `wideband`, `sine_sweep`, `stepped_sine`, `ringdown` |
 
@@ -103,8 +103,8 @@ Cross-file rules:
   limits the band.
 
 The third-party datasheets and manuals (shakers, amplifiers, DAQs, sensors) are not in this
-repository. They are in the project's Nextcloud folder (`CSAA04 HF Shakers (Alessandro)`):
-`Shakers/` and `Controller + DAQ/`. The source comments in `config/shakers/*.toml`,
+repository. They are in the project's Nextcloud folder (`CSAA04 EPICA DP (HF Shakers
+Alessandro)`): `Shakers/` and `Controller + DAQ + accellerometers/`. The source comments in `config/shakers/*.toml`,
 `config/daq/*.toml` and `config/sensors/*.toml` refer to them by file name.
 
 ### Shakers (`--shaker`)
@@ -179,7 +179,7 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
 
   - USB-6211: there is no analog anti-aliasing or reconstruction filter, so AI stays oversampled
     at ≥ 100 kS/s and only the decimation lowers the control rate. Response content up to
-    50 kHz (the PCB 356B18 resonance is ≥ 20 kHz) is then removed by the decimation FIR instead
+    50 kHz (the PCB 352B and 356B18 resonances are ≥ 25 and ≥ 20 kHz) is then removed by the decimation FIR instead
     of folding into the band. The higher rates are used only for bands above 15 kHz. Near
     37.5 kHz the AO images near `fs_io_hz` are only about 15 dB below the drive. At 250 kS/s
     the 4,095-sample AI FIFO lasts 16 ms, and the rates need a Hi-Speed USB connection; remove
@@ -244,7 +244,7 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
 
 ### Sensors (`--sensor`)
 
-The accelerometer is selected with `--sensor` (default `pcb356b18`). Its file holds the
+The accelerometer is selected with `--sensor` (default `pcb352b`). Its file holds the
 calibrated sensitivity of the axis used for control (`sensitivity_mv_per_g`), the measurement
 range (`range_g_pk`), the frequency range (`f_min_hz`, `f_max_hz`), the mass (`mass_kg`, added
 to `safety.payload_kg`) and the IEPE excitation range (`iepe_min_ma`, `iepe_max_ma`). The
@@ -260,11 +260,26 @@ controller uses them as follows:
 - With IEPE excitation from the DAQ, `daq.iepe_current_ma` must lie within the sensor's IEPE
   range. The sensor's highest output bias (`iepe_bias_max_v`) plus its swing at `range_g_pk`
   must stay below the DAQ's IEPE compliance voltage (`limits.iepe_compliance_v`). For the
-  356B18: 12 V + 5.24 V = 17.2 V, within the DT9837A's 18 V and the NI 9234's 19 V.
+  352B: 11.1 V + 4.86 V = 16.0 V; for the 356B18: 12 V + 5.24 V = 17.2 V. Both are within the
+  DT9837A's 18 V and the NI 9234's 19 V.
 
 The AI range follows the expected peak automatically (see the DAQ notes above). Choose the
 accelerometer so that the expected peak also stays inside the input range of any other
 instrument that shares the signal.
+
+**PCB 352B** (`pcb352b`, serial 526673, the default for now): a single-axis sensor with a wider
+band than the 356B18: 1000 mV/g nominal (972 mV/g calibrated), ±5 g, 2–10 000 Hz (±5 %),
+resonance ≥ 25 kHz, 25 g. Notes:
+
+- It has a 10-32 coaxial jack on top: use a standard 10-32 to BNC cable.
+- The output bias is 8–14 V (datasheet); this unit measured 11.1 V, which the file uses for the
+  IEPE compliance check. With the datasheet's 14 V the check would fail on the DT9837A
+  (14 + 4.86 V > 18 V), so measure the bias again if the sensor is replaced. Use AC coupling, as
+  for the 356B18 below.
+- Discharge time constant 0.1–0.6 s: wait a few seconds after switching on the IEPE excitation.
+- Its sensitivity and range are those of the 356B18, so the same limits apply: `low_g.toml`
+  peaks near 2.4 g, and the default `pretest.drive_rms_v` (0.01 V) keeps the pretest within
+  ±5 g.
 
 **PCB 356B18** (`pcb356b18`, serial LW266119): a triaxial, high-sensitivity sensor for
 low-frequency, low-level tests: 1000 mV/g nominal, ±5 g, 0.5–3000 Hz (±5 %), 25 g. Only one axis
@@ -281,9 +296,9 @@ calibrations. Notes:
   2.5 g. The default `pretest.drive_rms_v` (0.01 V) keeps the pretest within ±5 g on every
   shaker; at 0.05 V the BK shakers exceed it.
 
-A less sensitive, wider-band accelerometer will get its own file later for the higher-level
-example profiles (`flat`, `sloped`, `wideband`), which fail the
-356B18's range check.
+A more sensitive accelerometer may later replace the 352B as the default. The higher-level
+example profiles (`flat`, `sloped`, `wideband`) fail the range check of both ±5 g sensors; they
+need a less sensitive, higher-range accelerometer, which will get its own file.
 
 ### Wiring and power-up
 
@@ -365,7 +380,7 @@ max_abort_lines_pct = 5.0
 The PSD is interpolated log-log between breakpoints and is zero outside the first and last
 breakpoint.
 
-Examples: `low_g.toml` (0.55 g rms, 20–3000 Hz; fits the PCB 356B18), and
+Examples: `low_g.toml` (0.55 g rms, 20–3000 Hz; fits the PCB 352B and 356B18), and
 `flat.toml`, `sloped.toml` and `wideband.toml` (higher levels, for a
 less sensitive sensor).
 
@@ -426,7 +441,7 @@ Options of `check`, `pretest` and `run`
 (see [Configuration](#configuration) for the keys):
 
 - Required: `--shaker`, `--profile`.
-- Defaults: `--daq usb6211`, `--sensor pcb356b18`, `--settings default` (alias: `--station`),
+- Defaults: `--daq usb6211`, `--sensor pcb352b`, `--settings default` (alias: `--station`),
   `--config-dir config/`. All five take a key or a path.
 - `--level` shifts the profile level in dB (default 0).
 - `--ai-range` sets the AI range in V (one of the DAQ's ranges) or `auto` (default:
@@ -641,7 +656,7 @@ python tools/shaker_comparison.py --out "<Nextcloud folder>/Shakers/shaker_compa
 
 `tools/client_options_deck.py` built the first draft of the shaker and controller options
 presentation from the same shaker data. The deck has since been edited by hand in the Nextcloud
-folder (`Controller + DAQ/shaker_controller_options_draft.pptx`); do not rerun the script over
+folder (`Controller + DAQ + accellerometers/shaker_controller_options_draft.pptx`); do not rerun the script over
 it, because that would overwrite the edits.
 
 ## Development

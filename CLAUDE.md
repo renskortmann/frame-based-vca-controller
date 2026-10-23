@@ -9,8 +9,8 @@ This file only records what is not obvious from the code or README.
 - Setup: `python -m venv .venv && .venv/bin/pip install -e ".[plot,test]"`, then `.venv/bin/pytest`.
   All tests use the simulated backend, so no hardware is needed.
 - NI-DAQmx does not work under WSL2. In WSL2 always use `--sim`. OS per DAQ (NI's OS
-  compatibility table, `Controller + DAQ/NI/NI Hardware and Software Operating System
-  Compatibility Data.xlsx` in the Nextcloud folder, and the DT9837 manual): USB-6211 and
+  compatibility table, `Controller + DAQ + accellerometers/NI/NI Hardware and Software Operating
+  System Compatibility Data.xlsx` in the Nextcloud folder, and the DT9837 manual): USB-6211 and
   USB-4431 Windows only; PXIe-4468 and the cDAQ-9174 with NI 9232/9234/9260/9263 Windows and
   Linux; DT9837A Linux only (UL for Linux, `uldaq`; Data Translation's Windows driver is not
   used). No single OS runs all of them. The tests, `check` and a `--sim` run passed with Windows
@@ -39,7 +39,7 @@ Four files and a test profile combine into one run, each selected separately:
   settings file can override DAQ settings in a `[daq]` table, but never `model` or `[limits]`.
   `conditioner_gain` is the gain of an external IEPE conditioner (USB-6211). CompactDAQ files
   name the chassis in `device` and the modules in `ai_device`/`ao_device`.
-- Sensor (`--sensor`, `config/sensors/*.toml`, default `pcb356b18`): the control accelerometer's
+- Sensor (`--sensor`, `config/sensors/*.toml`, default `pcb352b`): the control accelerometer's
   calibrated sensitivity, range, frequency range, mass and IEPE current range. Settings files
   may not have a `[sensor]` table (the loader rejects it).
 - Settings (`--settings`, default key `default` = `config/settings/default.toml`; `--station` is
@@ -57,25 +57,34 @@ cross-file rules: shaker `max_drive_v` <= `daq.ao_range_v` (the USB-4431 AO is o
 `pretest.drive_rms_v` <= shaker `max_drive_rms_v`. `load_shaker` checks
 `max_drive_rms_v` <= `max_drive_v` and <= `amp_input_full_v`. `validate_settings` checks a
 DAQ IEPE current against the sensor's IEPE range, and the sensor's highest bias
-(`iepe_bias_max_v`) plus its swing at `range_g_pk` against `limits.iepe_compliance_v` (356B18:
-17.2 V; DT9837A 18 V, NI 9234 19 V). The pre-flight check compares the band with
+(`iepe_bias_max_v`) plus its swing at `range_g_pk` against `limits.iepe_compliance_v` (352B:
+16.0 V, 356B18: 17.2 V; DT9837A 18 V, NI 9234 19 V). The pre-flight check compares the band with
 the sensor's frequency range and the acceleration peak (`safety.accel_crest_factor` x rms for
 random) with `range_g_pk`; the runtime monitor aborts on a measured peak above it. The payload
 in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
 (`Settings.payload_total_kg`); the chain sensitivity is `Settings.v_per_g`.
 
-### PCB 356B18 (default sensor)
+### PCB 352B (default sensor, added 2026-10-23)
+
+- Single axis, serial 526673; calibration from the user: 972 mV/g. Datasheet `352b_c.pdf` is a
+  scan without a text layer (read it as an image).
+- Default "for now" (user's choice) because its band is 2-10000 Hz against the 356B18's
+  0.5-3000 Hz; same +/-5 g and ~1 V/g, so it is not the less sensitive sensor below. A more
+  sensitive accelerometer may become the default later.
+- `iepe_bias_max_v = 11.1` is the bias the user measured, not the datasheet's 8-14 V: with 14 V,
+  14 + 4.86 V fails the DT9837A's 18 V compliance check. Re-measure it for another unit.
+
+### PCB 356B18
 
 - Serial LW266119; calibration from the user: x 980, y 1054, z 1048 mV/g. The z axis closes the
   loop (`sensitivity_mv_per_g = 1048`); the others are only in the file's comments.
 - Intended for low-frequency, low-g tests: +/-5 g, 0.5-3000 Hz (+/-5 %). The shared
   `pretest.drive_rms_v` was lowered from 0.05 to 0.01 V for it: at 0.05 V the simulated pretest
   peaks above 5 g on the BK 4809 and BK 4801/4812. The higher-level example profiles
-  (`flat`, `sloped`, `wideband`) fail its range check; they wait for the
-  second, less sensitive and wider-band accelerometer, which gets its own sensor file and probably
-  becomes the default.
+  (`flat`, `sloped`, `wideband`) fail its range check (and the 352B's); they wait for a
+  less sensitive, higher-range accelerometer, which gets its own sensor file.
 - Tests mostly use `tests/data/sensor_test.toml` (10 mV/g, +/-500 g, 1-10000 Hz) so that they are
-  not limited by the 356B18.
+  not limited by the PCB sensors.
 
 ### DAQ device notes
 
@@ -95,7 +104,7 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
     and, with `decimation` > 1, 0.3 x control rate (the FIR passband).
   - Decimation: 1 on the DSA devices; on the USB-6211 the largest factor from 2 to 16
     (`MAX_DECIMATION`) with a whole-number control rate. The USB-6211 keeps fs_io >= 100 kS/s
-    (no anti-aliasing filter; the 356B18 resonance is >= 20 kHz).
+    (no anti-aliasing filter; the 352B/356B18 resonances are >= 25/20 kHz).
   - Frame size: the smallest power of two with df <= `control.line_spacing_hz` (6.25 Hz) and
     <= f_lo / 2, so the loop timing in seconds (frames per level, pretest, averaging) stays as
     tuned at every rate. This choice (lowest rate; df kept near 6 Hz) is the user's.
@@ -225,16 +234,17 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
 ## Documents outside the repo
 
 - Project folder (Nextcloud, synced; anything written there is shared):
-  `C:\Users\rkortmann\Nextcloud\CITG-macrolab\Projecten\CSAA04 HF Shakers (Alessandro)`,
-  in WSL `/mnt/c/Users/rkortmann/Nextcloud/CITG-macrolab/Projecten/CSAA04 HF Shakers (Alessandro)`.
+  `C:\Users\rkortmann\Nextcloud\CITG-macrolab\Projecten\CSAA04 EPICA DP (HF Shakers Alessandro)`,
+  in WSL `/mnt/c/Users/rkortmann/Nextcloud/CITG-macrolab/Projecten/CSAA04 EPICA DP (HF Shakers Alessandro)`.
   - `Shakers/`: shaker and amplifier datasheets/manuals (TIRA, BK 4809, Palladium P-2000, BK 4801/4812/2707),
     the RFQ template, the shaker comparison (`shaker_comparison.pdf`, .docx) and other candidates.
-  - `Controller + DAQ/`: `NI/` (NI DAQ and C Series specifications, the DAQmx user manual and
-    the OS compatibility table), the DT9837 datasheet and product manual, sensor datasheets
-    (ADXL326, optoNCDT 1220, VR9700, PCB) and the presentation below.
+  - `Controller + DAQ + accellerometers/`: `NI/` (NI DAQ and C Series specifications, the DAQmx
+    user manual and the OS compatibility table), `MCC DAQ/` (the DT9837 datasheet and product
+    manual), `PCB accelerometers/` (352B, 356B18, conditioners), other sensor datasheets
+    (ADXL326, optoNCDT 1220, VR9700) and the presentation below.
   - `Ommatidia Lidar/`: Q1/Q2 lidar and VR9700 integration documents.
 - Presentation for the researcher (the user's colleague in the same department; the user is the lab
-  engineer supporting them): `Controller + DAQ/shaker_controller_options_draft.pptx` in that folder.
+  engineer supporting them): `Controller + DAQ + accellerometers/shaker_controller_options_draft.pptx` in that folder.
   - The user edits it by hand in PowerPoint. Always edit that file (python-pptx on a copy, then copy
     back); never regenerate it with `tools/client_options_deck.py`, which only built the first draft
     (with € prices and a client tone that were later removed) and would overwrite the edits.

@@ -1,5 +1,5 @@
 # NI PXIe-4468 dynamic signal acquisition module (24-bit delta-sigma, 2 AI, 2 AO).
-# Values from Controller + DAQ/NI/pxie-4468_specifications_2026-09-30-15-05-09.pdf
+# Values from Controller + DAQ + accellerometers/NI/pxie-4468_specifications_2026-09-30-15-05-09.pdf
 # in the Nextcloud project folder.
 # Select with --daq pxie4468.
 #

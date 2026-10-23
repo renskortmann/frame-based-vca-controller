@@ -1,7 +1,7 @@
 # MCC (Data Translation) DT9837A USB module: 4 AI (24-bit delta-sigma, IEPE) and 1 AO (24-bit
 # delta-sigma). Driven through UL for Linux (the uldaq package), not NI-DAQmx: Linux or macOS only.
-# Values from Controller + DAQ/DT9837-Datasheet.pdf and DT9837-Product-Manual.pdf
-# in the Nextcloud project folder.
+# Values from Controller + DAQ + accellerometers/MCC DAQ/DT9837-Datasheet.pdf and
+# DT9837-Product-Manual.pdf in the Nextcloud project folder.
 # Select with --daq dt9837a.
 #
 # AI: 4 BNC, single-ended, +/-10 V (gain 1) or +/-1 V (gain 10), IEPE 4 mA (compliance 18 V),

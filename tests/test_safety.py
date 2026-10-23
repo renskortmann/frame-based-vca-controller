@@ -98,7 +98,7 @@ def test_stepped_sine_preflight_uses_highest_level(settings, tv51110, tmp_path):
 
 def test_sensor_range_and_band(tv51110, flat_profile, tmp_path):
     from vcactl.config import load_settings
-    st = pin_rates(load_settings())            # PCB 356B18: +/-5 g, 0.5-3000 Hz
+    st = pin_rates(load_settings(sensor="pcb356b18"))     # +/-5 g, 0.5-3000 Hz
     failed = {c.name for c in preflight(flat_profile, tv51110, st).checks if not c.ok}
     assert failed == {"accel peak (4.5 s) <= sensor",            # 4.45 g rms * 4.5
                       "AI peak (+3 dB) <= range"}                # 21 V at 1048 mV/g > 10 V
@@ -126,20 +126,20 @@ def test_payload_includes_sensor_mass(settings, flat_profile):
 
 def test_sensor_over_range_monitor(tv51110):
     from vcactl.config import load_settings
-    m = RuntimeMonitor(load_settings(), tv51110,   # 1048 mV/g, +/-5 g, 10 V AI range
+    m = RuntimeMonitor(load_settings(), tv51110,   # 972 mV/g, +/-5 g, 10 V AI range
                        AiRange(10.0, False, 0.0, 0.0))
-    m.check_io(5.2, 0.0, 0.0)                      # 4.96 g
+    m.check_io(4.8, 0.0, 0.0)                      # 4.94 g
     with pytest.raises(AbortError, match="sensor over range"):
-        m.check_io(5.3, 0.0, 0.0)                  # 5.06 g, below the AI overload limit
+        m.check_io(4.9, 0.0, 0.0)                  # 5.04 g, below the AI overload limit
 
 
 def test_select_ai_range_auto():
     from vcactl.config import load_settings
-    st = load_settings()                       # USB-6211 (0.2, 1, 5, 10 V), PCB 356B18 1048 mV/g
+    st = load_settings()                       # USB-6211 (0.2, 1, 5, 10 V), PCB 352B 972 mV/g
     low_g = load_profile(PROFILES / "low_g.toml")   # 0.546 g rms: 2.46 g peak (4.5 s)
     ai = select_ai_range(low_g, st)
-    assert ai.auto and ai.range_v == 5.0 and ai.peak_v == pytest.approx(2.575, rel=1e-3)
-    assert select_ai_range(low_g, st, level_db=-12).range_v == 1.0     # 0.65 V * 1.41 / 0.98
+    assert ai.auto and ai.range_v == 5.0 and ai.peak_v == pytest.approx(2.388, rel=1e-3)
+    assert select_ai_range(low_g, st, level_db=-12).range_v == 1.0     # 0.6 V * 1.41 / 0.98
     assert select_ai_range(low_g, st, level_db=-40).range_v == 0.2
     assert select_ai_range(low_g, st, level_db=6).range_v == 10.0
     manual = select_ai_range(low_g, st, level_db=-40, override=10.0)

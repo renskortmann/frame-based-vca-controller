@@ -187,9 +187,10 @@ def test_unresolved_rates_rejected(tv51110, flat_profile):
         Controller(settings, tv51110, flat_profile, SimulatedDaq(resolved, tv51110))
 
 
-def test_low_g_run_with_pcb356b18():
-    """Default sensor (PCB 356B18, +/-5 g) on the BK 4809: the pretest and run stay in range."""
-    settings = load_settings()
+@pytest.mark.parametrize("sensor", ["pcb352b", "pcb356b18"])
+def test_low_g_run_with_pcb_sensor(sensor):
+    """The +/-5 g PCB sensors on the BK 4809: the pretest and run stay in range."""
+    settings = load_settings(sensor=sensor)
     shaker = load_shaker("bk4809")
     profile = load_profile(PROFILES / "low_g.toml")
     ctl, backend, res = run(settings, shaker, profile)

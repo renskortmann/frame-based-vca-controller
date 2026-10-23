@@ -95,12 +95,12 @@ def test_usb6211_stays_oversampled_for_low_bands(tmp_path):
 
 
 def test_error_lists_every_component(tmp_path):
-    st = load_settings()                           # PCB 356B18: 0.5-3000 Hz
+    st = load_settings()                           # PCB 352B: 2-10000 Hz
     with pytest.raises(ConfigError) as exc:
         resolve_rates(flat(tmp_path, 1.0, 12000.0), load_shaker("tv51110"), st)  # 2-7000 Hz
     msg = str(exc.value)
     assert "does not fit" in msg
-    assert "f_hi 12000 Hz > f_max 3000 Hz of the sensor (PCB 356B18" in msg
+    assert "f_hi 12000 Hz > f_max 10000 Hz of the sensor (PCB 352B" in msg
     assert "f_hi 12000 Hz > f_max 7000 Hz of the shaker (" in msg
     assert "f_lo 1 Hz < f_min 2 Hz of the shaker (" in msg
     assert "USB-6211" not in msg                   # 12 kHz fits the DAQ

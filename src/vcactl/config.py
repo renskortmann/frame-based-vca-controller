@@ -339,7 +339,7 @@ def load_shaker(name_or_path: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> Sha
 
 
 def load_settings(path: Path | str | None = None, daq: str = "usb6211",
-                 config_dir: Path = DEFAULT_CONFIG_DIR, sensor: str = "pcb356b18") -> Settings:
+                 config_dir: Path = DEFAULT_CONFIG_DIR, sensor: str = "pcb352b") -> Settings:
     """Load a settings file (key or path, default ``default``: ``settings/default.toml``) and
     combine it with the DAQ device profile ``daq`` and the sensor file ``sensor``.
 

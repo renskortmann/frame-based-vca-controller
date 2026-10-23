@@ -1,0 +1,29 @@
+# PCB Piezotronics 352B: single-axis ICP (IEPE) accelerometer, ceramic shear, titanium.
+# Values from Controller + DAQ + accellerometers/PCB accelerometers/352b_c.pdf (spec sheet Rev C,
+# ECN 26574, spec number 18862) in the Nextcloud project folder.
+# Select with --sensor pcb352b (the default).
+#
+# Serial 526673. Calibrated sensitivity 972 mV/g (nominal 1000 +/-5 %).
+#
+# Output bias 8-14 V DC (datasheet); measured 11.1 V on this unit. With DAQ IEPE on, the bias +
+# the swing at the range limit (11.1 + 4.86 V) is checked against the DAQ's IEPE compliance
+# voltage. With the datasheet's 14 V it would be 18.9 V, above the DT9837A's 18 V: measure the
+# bias again if the unit is replaced.
+#
+# Not checked by the controller:
+# - Discharge time constant 0.1-0.6 s: wait a few seconds after the IEPE excitation is switched
+#   on before starting a pretest.
+# - 10-32 coaxial jack (top): a standard 10-32 to BNC cable.
+# - Transverse sensitivity <= 5 %, non-linearity <= 1 %, broadband resolution 0.00008 g rms
+#   (1-10000 Hz); spectral noise 15 / 5 / 2 / 1 ug/sqrt(Hz) at 1 / 10 / 100 / 1000 Hz.
+# - Mounting: 10-32 female thread, 10-20 in-lb; stud 081B05 (10-32) or M081B05 (to M6), adhesive
+#   base 080A12 or petro wax 080A109.
+name = "PCB 352B (526673)"
+sensitivity_mv_per_g = 972.0       # calibrated
+range_g_pk = 5.0                   # measurement range +/-5 g pk (overload limit 1000 g pk shock)
+f_min_hz = 2.0                     # +/-5 %: 2-10000 Hz (+/-10 %: 1-15000 Hz)
+f_max_hz = 10000.0                 # resonance >= 25 kHz
+mass_kg = 0.025                    # added to safety.payload_kg
+iepe_min_ma = 2.0                  # constant current excitation 2-20 mA (20-30 V DC)
+iepe_max_ma = 20.0
+iepe_bias_max_v = 11.1             # measured (datasheet: 8-14 V DC)
