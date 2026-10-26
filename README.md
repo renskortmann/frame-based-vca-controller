@@ -79,7 +79,7 @@ specimen-specific profile):
 | `--daq` | `config/daq/` | `usb6211` | `usb6211`, `usb4431`, `pxie4468`, `cdaq9234_9260`, `cdaq9232_9263`, `dt9837a` |
 | `--sensor` | `config/sensors/` | `pcb352b` | `pcb352b`, `pcb356b18` |
 | `--settings` | `config/settings/` | `default` | `default` |
-| `--profile` | `config/test_profiles/` | required | `low_g`, `flat`, `sloped`, `wideband`, `sine_sweep`, `stepped_sine`, `ringdown` |
+| `--profile` | `config/test_profiles/` | required | `low_g`, `low_g_10k`, `flat`, `sloped`, `wideband`, `sine_sweep`, `stepped_sine`, `ringdown` |
 
 `--shaker` and `--profile` have no default on purpose: the shaker file sets the
 amplifier-dependent drive limits, and the profile is the test itself, so neither should be
@@ -194,10 +194,10 @@ in its own `[daq]` table (for example `device = "Dev2"`), but not the limits.
     samples at n = 1 (≥ 51.2 kS/s) up to 103.25 at n = 64. The datasheet gives only the 63.3-sample
     DAC maximum, so the table in `usb4431.toml` was measured with `vcactl loopback` (2026-10-23).
   - USB-4431: the AO jumps when the AI rate or the AO base rate (51.2, 80 or 96 kHz) changes
-    (datasheet, "AO Transients"). With the amplifier on, this kicked the shaker at the start of
-    a pretest after a loopback at another rate, and the overload monitor aborted. The profile
-    therefore uses 51.2 kS/s for every run and for the loopback. If you set another rate
-    (`fs_io_auto_hz`, `fs_io_hz`), switch the amplifier off for the first run after a change.
+    (datasheet, "AO Transients"). With the amplifier on, that would kick the shaker at the start
+    of a run, so the profile uses 51.2 kS/s for every run and for the loopback. If you set
+    another rate (`fs_io_auto_hz`, `fs_io_hz`), switch the amplifier off for the first run after
+    a change.
   - CompactDAQ: `device` is the chassis (`cDAQ1`, whose terminals route the clocks);
     `ai_device` and `ao_device` are the modules (`cDAQ1Mod1`, `cDAQ1Mod2`): check the slots in
     NI MAX.
@@ -284,7 +284,8 @@ resonance ≥ 25 kHz, 25 g. Notes:
   IEPE compliance check. With the datasheet's 14 V the check would fail on the DT9837A
   (14 + 4.86 V > 18 V), so measure the bias again if the sensor is replaced. Use AC coupling, as
   for the 356B18 below.
-- Discharge time constant 0.1–0.6 s: wait a few seconds after switching on the IEPE excitation.
+- Discharge time constant 0.1–0.6 s: from cold it settles in about 2.4 s (see the IEPE note
+  under [Wiring and power-up](#wiring-and-power-up)).
 - Its sensitivity and range are those of the 356B18, so the same limits apply: `low_g.toml`
   peaks near 2.4 g, and the default `pretest.drive_rms_v` (0.01 V) keeps the pretest within
   ±5 g.
@@ -298,8 +299,8 @@ calibrations. Notes:
 - The output carries an 8–12 V bias. Use AC coupling: IEPE from the DAQ (USB-4431 2.1 mA,
   PXIe-4468 4/10/20 mA, NI 9234 2 mA, NI 9232 4 mA, DT9837A 4 mA), or the AC-coupled output of
   an external conditioner on the USB-6211. The NI 9234's ±5 V input limits it to about 4.7 g.
-- Wait at least 12 s after switching on the IEPE excitation before starting a pretest; the
-  output needs that long to settle.
+- It needs up to 12 s to settle after the IEPE excitation is switched on (see the IEPE note
+  under [Wiring and power-up](#wiring-and-power-up)).
 - 1 V/g leaves little room: a 0.55 g rms random test (`low_g.toml`) already peaks near
   2.5 g. The default `pretest.drive_rms_v` (0.01 V) keeps the pretest within ±5 g on every
   shaker; at 0.05 V the BK shakers exceed it.
@@ -323,6 +324,12 @@ to the specimen. How it is powered depends on the DAQ:
   on IEPE with `iepe_current_ma` (2 mA on the 9234, 4 mA on the 9232) and AC coupling. Connect
   AO 0 of the NI 9260 (BNC) or of the NI 9263 (terminals AO0 and COM) to the amplifier input.
   The NI 9263 drives at most 1 mA, so the amplifier input must be ≥ 10 kΩ.
+- **IEPE start-up (NI devices):** switched on from cold (after power-up, or after a run with
+  IEPE off), an IEPE sensor's output first jumps towards its bias voltage: the PCB 352B on the
+  USB-4431 sits at the 10.5 V end of the range for 0.1 s and settles in about 2.4 s. The excitation
+  stays on between runs. Before every run, the NI backend therefore switches it on in a separate
+  AI-only task and waits until the output has stayed within 2 % of the AI range for 0.5 s (at
+  most 30 s; otherwise the run stops with a DAQ fault). The DT9837A backend does not do this yet.
 - **DT9837A:** connect the accelerometer to AI 0 (BNC), IEPE 4 mA with AC coupling, and AO 0
   (BNC, ≥ 3.3 kΩ load) to the amplifier input.
 - **USB-6211:** it has no IEPE excitation, so an external IEPE signal conditioner powers the
@@ -389,7 +396,8 @@ max_abort_lines_pct = 5.0
 The PSD is interpolated log-log between breakpoints and is zero outside the first and last
 breakpoint.
 
-Examples: `low_g.toml` (0.55 g rms, 20–3000 Hz; fits the PCB 352B and 356B18), and
+Examples: `low_g.toml` (0.55 g rms, 20–3000 Hz; fits the PCB 352B and 356B18),
+`low_g_10k.toml` (the same 0.55 g rms over 20–10 000 Hz; PCB 352B only), and
 `flat.toml`, `sloped.toml` and `wideband.toml` (higher levels, for a
 less sensitive sensor).
 

@@ -27,8 +27,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--shaker", required=True,
                    help="shaker key (tv51110, tv52110, bk4809, bk4801_4812) or path to a shaker TOML file")
     p.add_argument("--profile", required=True,
-                   help="test profile key (low_g, flat, sloped, wideband, sine_sweep, stepped_sine, "
-                        "ringdown) or path to a profile TOML file (random, sine_sweep or stepped_sine)")
+                   help="test profile key (low_g, low_g_10k, flat, sloped, wideband, sine_sweep, "
+                        "stepped_sine, ringdown) or path to a profile TOML file (random, sine_sweep or stepped_sine)")
     p.add_argument("--daq", default="usb6211",
                    help="DAQ device key (usb6211, usb4431, pxie4468, cdaq9234_9260, cdaq9232_9263, "
                         "dt9837a) or path to a DAQ TOML file (default usb6211)")

@@ -1,0 +1,20 @@
+# Flat random profile to 10 kHz, 0.55 g rms (about 2.5 g peak at 4.5 sigma), like low_g: the
+# same level spread over the full band of the PCB 352B (2-10000 Hz, the default sensor). Does
+# not fit the 3 kHz band of the PCB 356B18. Stud-mount the accelerometer (10-32 stud into the
+# shaker table insert): on a magnet mount the BK 4809 pretest showed a mounting resonance at
+# 6.6 kHz (+20 dB, Q 12; the bare table resonates at 20 kHz), and the controller would then
+# under-test the table by up to 20 dB around it. Start at a low --level.
+name = "Flat 20-10000 Hz, 0.00003 g2/Hz"
+duration_s = 60.0
+
+breakpoints = [
+    { f_hz = 20.0, psd_g2_hz = 0.00003 },
+    { f_hz = 10000.0, psd_g2_hz = 0.00003 },
+]
+
+[tolerance]
+alarm_db = 3.0
+abort_db = 6.0
+rms_alarm_db = 1.5
+rms_abort_db = 3.0
+max_abort_lines_pct = 5.0

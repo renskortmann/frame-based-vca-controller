@@ -28,6 +28,30 @@ import numpy as np
 from ..config import DaqConfig, Settings
 from .base import DaqFault, channel_number
 
+# IEPE start-up: switched on from cold, the PCB 352B on the USB-4431 (AC coupling) sits at the
+# end of the +/-10 V range for 0.1 s and is within 30 mV only after about 3 s (2026-10-26).
+# The excitation stays on between tasks, so the sensor settles in a separate task first.
+SETTLE_FRACTION = 0.02          # settled: peak below this fraction of the AI range ...
+SETTLE_HOLD_S = 0.5             # ... for this long
+SETTLE_TIMEOUT_S = 30.0
+SETTLE_CHUNK_S = 0.1
+
+
+def wait_until_settled(read_chunk, fs: float, limit_v: float, hold_s: float = SETTLE_HOLD_S,
+                       timeout_s: float = SETTLE_TIMEOUT_S) -> float:
+    """Read chunks (``read_chunk()`` -> samples at ``fs``) until the peak has stayed below
+    ``limit_v`` for ``hold_s``; return the time read (s). DaqFault after ``timeout_s``."""
+    quiet = elapsed = 0.0
+    while quiet < hold_s:
+        if elapsed >= timeout_s:
+            raise DaqFault(f"the IEPE sensor output did not settle within {timeout_s:g} s "
+                           f"(peak above {limit_v:.3g} V): check the sensor and its cable")
+        x = np.asarray(read_chunk())
+        dt = len(x) / fs
+        elapsed += dt
+        quiet = quiet + dt if np.max(np.abs(x)) < limit_v else 0.0
+    return elapsed
+
 
 def list_devices() -> list[tuple[str, str, str]]:
     """Return (name, product type, serial) of the NI-DAQmx devices on this computer."""
@@ -82,38 +106,62 @@ class NiDaq:
         self._columns = [0]
         self.actual_rate = None
         self.ai_range_v = None
+        self.settle_s = 0.0               # time spent waiting for the IEPE sensor in start
+
+    def _add_ai_channel(self, task, name: str, control: bool) -> None:
+        """Control channel: the DAQ file's coupling and IEPE; loopback channel: DC, IEPE off."""
+        from nidaqmx.constants import (Coupling, ExcitationSource, ExcitationVoltageOrCurrent,
+                                       TerminalConfiguration)
+
+        d = self.cfg
+        ai = task.ai_channels.add_ai_voltage_chan(
+            f"{d.ai_device or d.device}/{name}",
+            terminal_config=TerminalConfiguration[d.ai_terminal_config.upper()],
+            min_val=-self.ai_range_v, max_val=self.ai_range_v)
+        coupling = d.ai_coupling if control else "DC"
+        if len(d.limits.ai_couplings) > 1 and coupling.upper() in d.limits.ai_couplings:
+            ai.ai_coupling = Coupling[coupling.upper()]
+        if d.limits.iepe_currents_ma:
+            if control and d.iepe_current_ma > 0:
+                ai.ai_excit_src = ExcitationSource.INTERNAL
+                ai.ai_excit_voltage_or_current = ExcitationVoltageOrCurrent.USE_CURRENT
+                ai.ai_excit_val = d.iepe_current_ma / 1000
+            else:
+                ai.ai_excit_src = ExcitationSource.NONE
+
+    def _settle_iepe(self) -> None:
+        """Switch the IEPE excitation on in an AI-only task (same channel, rate and range, so
+        the AO is not disturbed) and read until the sensor output has settled."""
+        import nidaqmx
+        from nidaqmx.constants import AcquisitionType
+
+        n = max(1, round(self.fs_io * SETTLE_CHUNK_S))
+        with nidaqmx.Task("vcactl_settle") as task:
+            self._add_ai_channel(task, self.cfg.ai_channel, control=True)
+            task.timing.cfg_samp_clk_timing(self.fs_io, sample_mode=AcquisitionType.CONTINUOUS,
+                                            samps_per_chan=n * 20)
+            task.start()
+            self.settle_s = wait_until_settled(
+                lambda: task.read(number_of_samples_per_channel=n, timeout=10.0),
+                self.fs_io, SETTLE_FRACTION * self.ai_range_v)
+            task.stop()
 
     def _create_tasks(self, prefill_len: int) -> None:
         import nidaqmx
-        from nidaqmx.constants import (AcquisitionType, Coupling, ExcitationSource,
-                                       ExcitationVoltageOrCurrent, RegenerationMode,
-                                       TaskMode, TerminalConfiguration)
+        from nidaqmx.constants import (AcquisitionType, RegenerationMode, TaskMode,
+                                       TerminalConfiguration)
         from nidaqmx.stream_readers import AnalogMultiChannelReader, AnalogSingleChannelReader
         from nidaqmx.stream_writers import AnalogSingleChannelWriter
 
         d = self.cfg
         dev = d.device                       # CompactDAQ: the chassis, where the terminals are
-        ai_dev, ao_dev = d.ai_device or dev, d.ao_device or dev
-        term = TerminalConfiguration[d.ai_terminal_config.upper()]
+        ao_dev = d.ao_device or dev
 
         self.ai_task = nidaqmx.Task("vcactl_ai")
         names = [d.ai_channel] + ([self.loopback_channel] if self.loopback_channel else [])
         order = sorted(range(len(names)), key=lambda i: channel_number(names[i]))
         for i in order:                      # DSA devices need ascending channel order
-            ai = self.ai_task.ai_channels.add_ai_voltage_chan(
-                f"{ai_dev}/{names[i]}", terminal_config=term,
-                min_val=-self.ai_range_v, max_val=self.ai_range_v)
-            control = i == 0
-            coupling = d.ai_coupling if control else "DC"
-            if len(d.limits.ai_couplings) > 1 and coupling.upper() in d.limits.ai_couplings:
-                ai.ai_coupling = Coupling[coupling.upper()]
-            if d.limits.iepe_currents_ma:
-                if control and d.iepe_current_ma > 0:
-                    ai.ai_excit_src = ExcitationSource.INTERNAL
-                    ai.ai_excit_voltage_or_current = ExcitationVoltageOrCurrent.USE_CURRENT
-                    ai.ai_excit_val = d.iepe_current_ma / 1000
-                else:
-                    ai.ai_excit_src = ExcitationSource.NONE
+            self._add_ai_channel(self.ai_task, names[i], control=i == 0)
         self._columns = [order.index(i) for i in range(len(names))]
         self.ai_task.timing.cfg_samp_clk_timing(
             self.fs_io, sample_mode=AcquisitionType.CONTINUOUS, samps_per_chan=self.block_io * 20)
@@ -169,6 +217,8 @@ class NiDaq:
     def start(self, prefill: np.ndarray, ai_range_v: float) -> None:
         self.ai_range_v = ai_range_v
         try:
+            if self.cfg.limits.iepe_currents_ma and self.cfg.iepe_current_ma > 0:
+                self._call(self._settle_iepe)
             self._call(self._create_tasks, len(prefill))
             self._call(self._writer.write_many_sample, np.ascontiguousarray(prefill, dtype=float))
             self._call(self.ao_task.start)   # armed: waits for the AI sample clock / start trigger

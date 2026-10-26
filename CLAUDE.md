@@ -112,10 +112,17 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
     frame size) are one ConfigError. Highest test frequency with the DAQ as the only limit:
     USB-6211 37.5 kHz, USB-4431 23.2 kHz (43.5 kHz at 96 kS/s), PXIe-4468 90.8 kHz.
   - USB-4431 fixed at 51.2 kS/s (`fs_io_auto_hz = [51200]`, user's choice 2026-10-23): a change
-    of AI rate or AO base rate makes the AO jump (datasheet "AO Transients"). A pretest at
-    10 kS/s after a 96 kS/s loopback aborted on a 10.5 V AI overload in the noise-floor
-    blocks (zero drive); rerun at the same rate it passed. Tests that need the rate choice
-    among all AO rates pass `fs_io_auto_hz = ()` (`test_rates.all_ao_rates`).
+    of AI rate or AO base rate makes the AO jump (datasheet "AO Transients"). The choice was
+    made after a 10.5 V AI overload in the noise-floor blocks, first blamed on that transient;
+    it was the IEPE start-up (next item), and no AO transient has been seen on the hardware.
+    The fixed rate stays as a precaution. Tests that need the rate choice among all AO rates
+    pass `fs_io_auto_hz = ()` (`test_rates.all_ao_rates`).
+  - IEPE start-up (2026-10-26): switched on from cold, the 352B on the USB-4431 (AC coupling)
+    reads 10.5 V for 0.1 s and settles in about 2.4 s; the excitation then stays on between
+    DAQmx tasks. `NiDaq.start` therefore runs `_settle_iepe` (AI-only task, same channel, rate
+    and range) until `wait_until_settled` sees the peak below 2 % of the range for 0.5 s
+    (DaqFault after 30 s). Not in the UL backend (DT9837A) yet. Verified: pretest after a
+    power cycle passed (2026-10-26).
   - Decimation 1 (now the DSA default) has run only in the simulator. Tests that need exact
     numbers pin the old fixed rates with `conftest.pin_rates`.
 - The simulator discretizes the shaker model with a bilinear transform at fs_io. At low DSA
@@ -267,11 +274,25 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
 
 ## Status
 
-- Sine sweep, stepped sine and ring-down (`src/vcactl/sine.py`) have only run in the simulator.
+- Sine sweep (`src/vcactl/sine.py`) ran on the BK 4809 setup (2026-10-26, `sine_sweep` at
+  -12 dB and 0 dB: 20-2000 Hz in 6.6 min, all 4983 steps within +/-0.1 dB, through the
+  200 Hz resonance within 0.04 dB; at 0 dB 0.5 g with at most 69 mV peak drive). Stepped sine and ring-down have only run in the simulator.
   They control the base (one AI channel); response-controlled and phase-resonant sine (as in
   the TRC joint-damping tests) need a second AI channel and are deferred.
 
 - The laser displacement sensor as control sensor (commit dfadd62) was dropped on 2026-10-14 and
   its code and config removed; the loop is always closed with the accelerometer.
-- Only simulated runs and `check` have been done for the BK 4809 and BK 4801/4812 setups. `pretest` and `run` on
-  real hardware are still untested; start with a low `--level` (for example `-12`).
+- BK 4809 + P-2000 + USB-4431 + 352B: `pretest` at -12 dB passed on the hardware (2026-10-23:
+  0.30 g rms at 0.01 V rms, coherence 1.000, SNR 47 dB, noise floor mostly the amplifier).
+  First `run` on hardware: `low_g` at -12 dB for 30 s (2026-10-26): -0.03 dB rms error, line
+  errors 0.49 dB std (max +/-1.8 dB, no alarms), coherence >= 0.967. Measured H is 28-31 g/V
+  above 1 kHz, matching the mass line of the shaker file (4.55 A/V x 6.4 N/A / 0.105 kg); it
+  peaks near 200 Hz and is 8 g/V at 20 Hz (voltage drive, not in the simulator). Also passed
+  at -6 dB (30 s) and 0 dB (60 s: +0.10 dB, line std 0.65 dB, no alarms, peak 2.62 g, drive
+  0.019 V rms, no clipping). The BK 4801/4812, stepped sine, ring-down and higher levels (they need a
+  wider-range sensor) are untested on hardware.
+- The 352B is on a magnet mount (no stud available, user's choice to stay at 3 kHz,
+  2026-10-26). A `low_g_10k` pretest showed a mounting resonance at 6.6 kHz (+20 dB, Q 12;
+  the 4809 bare table resonates at 20 kHz). Over-reading against the 1-2 kHz level: 0.6 dB at
+  3 kHz, 1.3 at 3.5, 2.4 at 4, 4.8 at 5 kHz, so the controller under-tests the table by that
+  much. Keep profiles <= 3 kHz (at most 4 kHz) until the sensor is stud- or wax-mounted.
