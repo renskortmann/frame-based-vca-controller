@@ -85,13 +85,13 @@ def test_bk4801_4812_profile_loads():
 
 
 def test_bk4809_drive_limits_match_amp():
-    # P-2000 at 9.1 V/V: 5 A rms into the ~2 ohm coil needs 10 V rms out, 1.1 V rms in
+    # P-2000 at 9 V/V (measured): 5 A rms into the ~2 ohm coil needs 10 V rms out, 1.11 V rms in
     sh = load_shaker("bk4809")
-    assert sh.amp_input_full_v == pytest.approx(5.0 * 2.0 / 9.1, abs=0.01)
+    assert sh.amp_input_full_v == pytest.approx(5.0 * 2.0 / 9.0, abs=0.01)
     assert sh.max_drive_rms_v <= sh.amp_input_full_v
     assert sh.max_drive_v == 2.7
     assert sh.f_min_hz == 20.0                     # amplifier response from 20 Hz
-    assert sh.sim.amp_gain_a_per_v == pytest.approx(9.1 / 2.0)
+    assert sh.sim.amp_gain_a_per_v == pytest.approx(9.0 / 2.0)
 
 
 ALL_DAQS = ["usb6211", "usb4431", "pxie4468", "cdaq9234_9260", "cdaq9232_9263", "dt9837a"]
@@ -220,7 +220,7 @@ def test_max_drive_limited_by_ao_range(tv51110):
 
 @pytest.mark.parametrize("field,value,match", [
     ("max_drive_rms_v", 4.0, "max_drive_v"),       # rms above peak clip
-    ("max_drive_rms_v", 1.2, "amp_input_full_v"),  # above the P-2000 full-rating input (1.1 V)
+    ("max_drive_rms_v", 1.2, "amp_input_full_v"),  # above the P-2000 full-rating input (1.11 V)
 ])
 def test_shaker_drive_limits_validated(tmp_path, field, value, match):
     text = open("config/shakers/bk4809.toml").read()

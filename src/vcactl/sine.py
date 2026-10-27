@@ -38,6 +38,9 @@ TUNED_LOOP_BLOCKS = 4          # loop delay (AO queue 2 + frame 2 half-frames) s
                                # is tuned for; a longer AO queue scales the gain down
 ABORT_BLOCKS = 3               # consecutive half-frames beyond abort_db before aborting
 RINGDOWN_PRE_S = 0.1           # response recorded before the cut
+JUMP_FADE_OCT = 0.5            # stepped sine: a larger frequency step fades out and ramps in again
+JUMP_FADE_S = 0.5              # (a glide through a resonance overshoots: 0.79 g for 0.5 g on the
+                               # BK 4809, 500 -> 50 Hz in one half-frame)
 
 
 @dataclass
@@ -297,6 +300,19 @@ class SineController(ControllerBase):
                 raise AbortError(f"could not reach {self._ref(f, level_db):.3g} g peak at "
                                  f"{f:.1f} Hz within {max_s:g} s")
 
+    def _fade_out(self, seconds: float) -> None:
+        """Fade the sine to zero at its frequency, with the I/O checks (before a large jump)."""
+        self.phase_name = "fade"
+        n = max(1, math.ceil(seconds * self.fs / self.half))
+        a0, r0 = self.amp_v, self.ref_g
+        for i in range(1, n + 1):
+            self._check_stop()
+            sd, _ = self._generate(self.f, r0 * (1 - i / n), a0 * (1 - i / n))
+            self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            self.run_time_s += self.half / self.fs
+            self._report(sd, None)
+        self.sine_on = False
+
     def _new_step(self, label: str, level_db: float) -> None:
         self.step_id += 1
         self.step_label = label
@@ -342,6 +358,9 @@ class SineController(ControllerBase):
         for li, lvl in enumerate(p.levels_db):
             level = lvl + self.target_level_db
             for fi, f in enumerate(p.frequencies_hz):
+                if not silent and abs(math.log2(f / self.f)) > JUMP_FADE_OCT:
+                    self._fade_out(JUMP_FADE_S)        # still under the previous step's label
+                    silent = True
                 self._new_step(f"L{li + 1}F{fi + 1}", level)
                 if silent:
                     self.f = f

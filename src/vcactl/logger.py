@@ -33,6 +33,7 @@ class RunLogger:
         self._status = csv.DictWriter(self._status_fh, fieldnames=self.fields)
         self._status.writeheader()
         self._raw_fh = None
+        self._pending: list[tuple[Path, np.ndarray, str]] = []    # time series, written by close()
 
     def meta(self, data: dict) -> None:
         with open(self.dir / "meta.json", "w") as fh:
@@ -60,9 +61,11 @@ class RunLogger:
         return path
 
     def timeseries(self, name: str, columns: dict) -> Path:
+        """Queue ``<name>.csv``; it is written by ``close()``, after the stream has stopped: at
+        51.2 kS/s a 2 s ring-down takes about 0.15 s to format, as long as the AO queue lasts."""
         path = self.dir / f"{name}.csv"
         data = np.column_stack([np.asarray(c, dtype=float) for c in columns.values()])
-        np.savetxt(path, data, delimiter=",", header=",".join(columns), comments="", fmt="%.6e")
+        self._pending.append((path, data, ",".join(columns)))
         return path
 
     def raw(self, drive: np.ndarray, response: np.ndarray) -> None:
@@ -76,3 +79,6 @@ class RunLogger:
         self._status_fh.close()
         if self._raw_fh is not None:
             self._raw_fh.close()
+        for path, data, header in self._pending:
+            np.savetxt(path, data, delimiter=",", header=header, comments="", fmt="%.6e")
+        self._pending.clear()

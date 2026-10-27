@@ -116,12 +116,12 @@ gain and the drive limits at the amplifier input.
 |---|---|---|---|---|
 | `tv51110` | TIRA TV 51110 | BDA 120 | 2–7000 | 3.5 V peak / 1.5 V rms |
 | `tv52110` | TIRA TV 52110 | BDA 120 | 2–7000 | 3.5 V peak / 1.5 V rms |
-| `bk4809` | BK 4809 | DAP-Audio Palladium P-2000 | 20–20000 | 2.7 V peak / 0.88 V rms |
+| `bk4809` | BK 4809 | DAP-Audio Palladium P-2000 | 20–20000 | 2.7 V peak / 0.89 V rms |
 | `bk4801_4812` | BK 4801 body with 4812 general purpose head | BK 2707 | 5–10000 | 3.5 V peak / 1.25 V rms |
 
 The drive limits `max_drive_v` (peak clip) and `max_drive_rms_v` are in the shaker file,
 because they depend on the amplifier. The BDA 120 reaches full power at 3.5 V peak (2.47 V rms)
-sine input. For the BK 4809 the limits are 80 % of the 1.1 V rms full-rating input at 9.1× gain.
+sine input. For the BK 4809 the limits are 80 % of the 1.11 V rms full-rating input at the measured 9× gain.
 Raise the rms limit only if a profile needs more drive. `max_drive_rms_v` may not exceed
 `amp_input_full_v`. The header comments of each shaker file describe the assumed amplifier
 setup, and a table of payload limits.
@@ -427,7 +427,11 @@ Example: `sine_sweep.toml`. `--duration` is ignored for sine profiles.
 
 The amplitude breakpoints work as for the sine sweep. Each step settles, dwells and, with
 `ringdown_s` > 0, cuts the drive to record the ring-down (see
-[Sine control](#sine-control)).
+[Sine control](#sine-control)). The drive glides to the next frequency within one half-frame;
+for a step of more than half an octave (for example from the last frequency of a level back to
+the first of the next) it fades the tone out over 0.5 s instead and ramps in again at the new
+frequency, because a fast glide through a resonance overshoots (0.79 g for 0.5 g on the
+BK 4809, 500 to 50 Hz).
 
 ```toml
 type = "stepped_sine"

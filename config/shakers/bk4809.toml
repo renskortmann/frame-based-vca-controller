@@ -2,14 +2,15 @@
 # Values from Shakers/BK shaker 4809.pdf (BP 0231) and Shakers/DAP-AUDIO Palladium 2000.pdf
 # (Palladium Vintage series product manual) in the Nextcloud project folder.
 #
-# Assumed amplifier setup (adjust amp_input_full_v, max_drive_v, max_drive_rms_v and [sim]
-# together if you use something else):
+# Amplifier setup (adjust amp_input_full_v, max_drive_v, max_drive_rms_v and [sim] together if
+# you change it):
 #   stereo mode (never bridged), shaker on one channel, input attenuator of that channel turned
-#   down to about 9.1 V/V (-20 dB from the standard 91x gain with the attenuator fully clockwise).
-#   Into the ~2 ohm exciter coil this gives ~4.5 A/V, so 5 A rms (full rating) needs 1.1 V rms in.
-#   The knob is not calibrated: measure the gain (1 kHz sine, e.g. 0.1 V rms in -> 0.91 V rms out)
-#   and, for a measured gain G, set amp_input_full_v = 10 / G (5 A rms * 2 ohm), scale both drive
-#   limits by the same factor and set [sim] amp_gain_a_per_v = G / 2.
+#   down to 9 V/V (about -20 dB from the standard 91x gain with the attenuator fully clockwise),
+#   measured with a function generator and a true-RMS multimeter. Into the ~2 ohm exciter coil
+#   this gives ~4.5 A/V, so 5 A rms (full rating) needs 1.11 V rms in.
+#   The knob is not calibrated: after turning it, measure the gain G again, set
+#   amp_input_full_v = 10 / G (5 A rms * 2 ohm), scale both drive limits by the same factor and
+#   set [sim] amp_gain_a_per_v = G / 2.
 # The P-2000 is a voltage-mode audio amplifier without a current limit (it can deliver over 1 kW);
 # the drive limits below are the only protection of the 5 A rms coil rating. It is rated into
 # 8 and 4 ohm only; the 2 ohm coil needs at most 10 V rms, far below the amplifier's power rating.
@@ -26,9 +27,9 @@ velocity_peak_m_s = 1.65
 moving_mass_kg = 0.060             # "dynamic weight of moving element"
 suspension_stiffness_n_per_mm = 12.0
 armature_resonance_hz = 20000.0    # "axial resonant frequency, bare table"
-amp_input_full_v = 1.1             # P-2000 at 9.1 V/V: 5 A rms into ~2 ohm = 10 V rms out
+amp_input_full_v = 1.11            # P-2000 at 9 V/V (measured): 5 A rms into ~2 ohm = 10 V rms out
 max_drive_v = 2.7                  # hard clip of the drive (peak), about 3 sigma of the rms limit
-max_drive_rms_v = 0.88             # abort if the drive rms exceeds this (80 % of the 1.1 V rms rating)
+max_drive_rms_v = 0.89             # abort if the drive rms exceeds this (80 % of the 1.11 V rms rating)
 
 # Static payload limit (vertical mounting): the weight of accelerometer + fixture + specimen sags the
 # flexures by payload * g / stiffness (0.82 mm/kg). At payload_static_max_kg the sag uses up the
@@ -58,7 +59,7 @@ payload_static_max_kg = 4.9
 
 # Model parameters used only by the simulated backend (--sim).
 [sim]
-amp_gain_a_per_v = 4.55            # mid-band equivalent: 9.1 V/V gain / ~2 ohm coil impedance
+amp_gain_a_per_v = 4.5             # mid-band equivalent: 9 V/V gain / ~2 ohm coil impedance
                                    # (voltage mode; back-EMF damping is not modelled)
 bl_n_per_a = 6.4                   # current-to-force ratio, 6.4 N/A
 suspension_zeta = 0.15

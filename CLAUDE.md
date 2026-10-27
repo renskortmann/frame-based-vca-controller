@@ -212,16 +212,17 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   fully clockwise, 750 W/8 ohm or 1025 W/4 ohm per channel. The drive limits in the shaker file are
   the only protection of the 4809's 5 A rms coil rating. Use stereo mode, one channel, never
   bridged; the ~2 ohm coil is below the 4 ohm rated load, but needs only ~10 V rms / 50 W.
-- Amplifier setup (the user's choice): the channel attenuator turned down to about 9.1 V/V
-  (-20 dB). Into the ~2 ohm coil this gives ~4.5 A/V, so the 5 A rms rating is reached at
-  1.1 V rms input (`amp_input_full_v = 1.1`, `[sim] amp_gain_a_per_v = 4.55`, a mid-band
-  equivalent; back-EMF damping in voltage mode is not modelled). The knob is uncalibrated, so the
-  actual gain G must be measured (1 kHz sine); then `amp_input_full_v = 10 / G`, both drive
-  limits scale by the same factor, and `[sim] amp_gain_a_per_v = G / 2`. Update them together.
+- Amplifier setup (the user's choice): the channel attenuator turned down to about -20 dB; the
+  user measured the gain as 9 V/V (function generator, true-RMS multimeter; 2026-10-27). Into
+  the ~2 ohm coil this gives ~4.5 A/V, so the 5 A rms rating is reached at 1.11 V rms input
+  (`amp_input_full_v = 1.11`, `[sim] amp_gain_a_per_v = 4.5`, a mid-band equivalent; back-EMF
+  damping in voltage mode is not modelled). The knob is uncalibrated: after turning it, measure
+  the gain G again; then `amp_input_full_v = 10 / G`, both drive limits scale by the same
+  factor, and `[sim] amp_gain_a_per_v = G / 2`. Update them together.
   With the attenuator fully clockwise the full rating would be at 0.11 V rms, and the shared
   `pretest.drive_rms_v = 0.01` would already drive ~9 % of the rating.
 - Drive limits: `max_drive_v = 2.7` (peak clip, about 3 sigma of the rms limit) and
-  `max_drive_rms_v = 0.88` (80 % of the 1.1 V rms rating).
+  `max_drive_rms_v = 0.89` (80 % of the 1.11 V rms rating).
 - `f_min_hz = 20`: the P-2000 is specified 20 Hz - 20 kHz (+0.1/-3 dB), with a subsonic
   protection circuit at 10 Hz and a high-frequency protection that disconnects the output on
   excessive HF energy (threshold not given; untested with wideband random drive).
@@ -276,8 +277,25 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
 
 - Sine sweep (`src/vcactl/sine.py`) ran on the BK 4809 setup (2026-10-26, `sine_sweep` at
   -12 dB and 0 dB: 20-2000 Hz in 6.6 min, all 4983 steps within +/-0.1 dB, through the
-  150 Hz resonance within 0.04 dB; at 0 dB 0.5 g with at most 69 mV peak drive). Stepped sine and ring-down have only run in the simulator.
-  They control the base (one AI channel); response-controlled and phase-resonant sine (as in
+  150 Hz resonance within 0.04 dB; at 0 dB 0.5 g with at most 69 mV peak drive). The largest
+  error (+0.07-0.09 dB, 20-25 Hz, at every level) is because the pretest band starts at the
+  shaker's `f_min_hz` (20 Hz), so its lowest line is 25 Hz and `_h_at` holds |H(25 Hz)| below it;
+  only `corr_db` follows the rising |H| there, and it trails the sweep. Stepped sine
+  too (2026-10-27, `stepped_sine`, 63 steps): dwell means within 0.002 dB, every step settled
+  in the 2 s minimum, |H| equal at the three levels within 0.2 dB. The jump from the last
+  step of a level (500 Hz) to the first of the next (50 Hz) glided in one half-frame with the
+  drive amplitude interpolated linearly, so it overshot near the 150 Hz resonance (0.41 g for
+  0.25 g, 0.79 g for 0.5 g, ~50 ms, before the dwell); 1/6-octave steps did not. Fixed
+  2026-10-27: a step > `JUMP_FADE_OCT` (0.5 oct) runs `_fade_out` (0.5 s) and `_ramp_in`
+  from silence (sim: peak 0.50 g for 0.5 g; without the fade 1.05 V on the auto 1 V range,
+  an AI-overload abort). Confirmed on the hardware (2026-10-27): peak between levels equals
+  the dwell peak (0.293 vs 0.294 g, 0.540 vs 0.547 g, noise included). Ring-down
+  too (2026-10-27, `ringdown`, 120 Hz, three levels): the bare 4809 stops within 3 ms (below
+  10 %), the same at every level; most likely the P-2000 holding 0 V shorts the coil (back-EMF
+  braking). The first attempt underflowed the AO (-200621): `RunLogger.timeseries` formatted
+  the 2 s ring-down CSV (0.15 s) during the stream; it now queues it and writes on `close()`.
+  Writing anything slow during the stream is unsafe: the AO queue lasts 2 half-frames (160 ms
+  at 51.2 kS/s). They control the base (one AI channel); response-controlled and phase-resonant sine (as in
   the TRC joint-damping tests) need a second AI channel and are deferred.
 
 - Report support (2026-10-27): `--record` (raw.f32 via `RunLogger.raw`, recorded in
@@ -296,7 +314,7 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   0.30 g rms at 0.01 V rms, coherence 1.000, SNR 47 dB, noise floor mostly the amplifier).
   First `run` on hardware: `low_g` at -12 dB for 30 s (2026-10-26): -0.03 dB rms error, line
   errors 0.49 dB std (max +/-1.8 dB, no alarms), coherence >= 0.967. Measured H is 28-31 g/V
-  above 1 kHz, matching the mass line of the shaker file (4.55 A/V x 6.4 N/A / 0.105 kg); it
+  above 1 kHz, matching the mass line of the shaker file (4.5 A/V x 6.4 N/A / 0.105 kg); it
   peaks near 150 Hz and is 8 g/V at 20 Hz (voltage drive, not in the simulator). Also passed
   at -6 dB (30 s) and 0 dB (60 s: +0.10 dB, line std 0.65 dB, no alarms, peak 2.62 g, drive
   0.019 V rms, no clipping). The BK 4801/4812, stepped sine, ring-down and higher levels (they need a

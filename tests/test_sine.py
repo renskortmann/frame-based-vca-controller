@@ -108,6 +108,35 @@ def test_stepped_sine_steps_within_tolerance(settings, tv51110, tmp_path):
     assert_safe_stop(tv51110, backend)
 
 
+@pytest.mark.parametrize("fade", [True, False])
+def test_large_step_fades_instead_of_gliding(settings, tmp_path, monkeypatch, fade):
+    """500 -> 30 Hz glides through the simulated BK 4809 resonance (about 54 Hz) and overshoots;
+    a jump of more than JUMP_FADE_OCT fades out and ramps in again, so it does not."""
+    from vcactl import sine
+    from vcactl.config import load_shaker
+    if not fade:
+        monkeypatch.setattr(sine, "JUMP_FADE_OCT", 100.0)
+    prof = write_profile(tmp_path, 'type = "stepped_sine"\n'
+                         'breakpoints = [{ f_hz = 30.0, accel_g = 0.5 }]\n'
+                         'frequencies_hz = [500.0, 30.0]\nsettle_s = 0.5\ndwell_s = 0.5\n')
+    logger = RunLogger(tmp_path, "jump", SINE_STATUS_FIELDS)
+    rows = []
+    ctl, backend, res = run(settings, load_shaker("bk4809"), prof, logger=logger, record=True,
+                            rows=rows)
+    logger.close()
+    assert res.completed, res.reason
+    assert any(r["state"] == "fade" for r in rows) == fade
+    raw = np.fromfile(logger.dir / "raw.f32", dtype=np.float32).reshape(-1, 2)[:, 1]
+    first, second = ctl.steps
+    between = raw[round(first["t_end_s"] * ctl.fs):round(second["t_start_s"] * ctl.fs)]
+    overshoot = np.max(np.abs(between)) / second["ref_pk_g"]
+    if fade:
+        assert overshoot < 1.1
+    else:
+        assert overshoot > 1.3                     # the glide this test guards against
+    assert_safe_stop(load_shaker("bk4809"), backend)
+
+
 def test_ringdown(settings, tv51110, tmp_path):
     prof = write_profile(tmp_path, 'type = "stepped_sine"\n'
                          'breakpoints = [{ f_hz = 120.0, accel_g = 0.5 }]\n'
@@ -115,6 +144,8 @@ def test_ringdown(settings, tv51110, tmp_path):
                          'ringdown_s = 0.5\n')
     logger = RunLogger(tmp_path, "ring", SINE_STATUS_FIELDS)
     ctl, backend, res = run(settings, tv51110, prof, logger=logger)
+    # written only after the stream: formatting it during the run can underflow the AO
+    assert not (logger.dir / "ringdown_L1F1.csv").exists()
     logger.close()
     assert res.completed, res.reason
     assert len(ctl.events) == 2 and len(ctl.steps) == 2

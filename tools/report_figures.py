@@ -6,6 +6,9 @@ Each figure is drawn only when its inputs are given:
   sine_sweep.png       --sine <run> [<run> ...]            sine sweep runs (status.csv)
   shaker_response.png  --frf <pretest run>                 pretest_frf.csv up to 10 kHz
   open_vs_closed.png   --open <run> --closed <run>         sine sweeps recorded with --record
+  stepped_sine.png     --stepped <run>                     steps.csv and status.csv
+  stepped_sine_time.png                                    + raw.f32 (recorded with --record)
+  ringdown.png         --ringdown <run>                    ringdown_<step>.csv, steps.csv
   card_delay.png       --delays <delays.csv>               loopback delay per rate
   iepe_startup.png     --iepe <dir>                        tools/iepe_startup.py output
 
@@ -30,7 +33,10 @@ GRID = "#e3e7ec"
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]    # categorical slots 1-3, fixed order
 WIDTH_IN = 16 / 2.54
 TABLE_RESONANCE_HZ = 20000.0                  # BK 4809 bare-table axial resonance (datasheet)
-
+RAMP_TAIL_ROWS = 4            # first sweep rows whose frame still holds the end of the ramp-in
+FILTER_BAND_HZ = (20, 1000)   # band-pass for plotted time traces (removes broadband noise)
+FILTER_EDGE_S = 0.02          # start-up transient of the band-pass at a record's ends
+FILTER_PAD_S = 0.25           # extra data filtered around a cut-out of a longer record
 plt.rcParams.update({
     "font.size": 8, "axes.titlesize": 9, "axes.labelsize": 8, "legend.fontsize": 7.5,
     "xtick.labelsize": 7.5, "ytick.labelsize": 7.5, "text.color": INK, "axes.labelcolor": INK,
@@ -49,6 +55,7 @@ def load_csv(path: Path) -> dict:
 def sweep_rows(run: Path) -> dict:
     with open(run / "status.csv") as fh:
         rows = [r for r in csv.DictReader(fh) if r["state"].startswith("sweep") and r["err_db"]]
+    rows = rows[RAMP_TAIL_ROWS:]
     cols = ("t_s", "f_hz", "ref_pk_g", "meas_pk_g", "err_db", "drive_pk_v")
     return {c: np.array([float(r[c]) for r in rows]) for c in cols}
 
@@ -68,10 +75,20 @@ def plain_log_ticks(axis, lo, hi) -> None:
 
 
 def log_freq_axis(ax, lo, hi) -> None:
+    nice = 10 ** np.floor(np.log10(lo)) * np.array([1, 2, 5, 10])
+    near = nice[(nice <= lo) & (nice > lo * 0.99)]
+    lo = float(near[0]) if near.size else lo                   # 20.04 Hz -> 20, for its tick
     ax.set_xscale("log")
     ax.set_xlim(lo, hi)
     plain_log_ticks(ax.xaxis, lo, hi)
     ax.set_xlabel("frequency (Hz)")
+
+
+def bandpass(y: np.ndarray, fs: float) -> np.ndarray:
+    from scipy import signal
+
+    sos = signal.butter(4, FILTER_BAND_HZ, "bandpass", fs=fs, output="sos")
+    return signal.sosfiltfilt(sos, y)
 
 
 def save(fig, out: Path, name: str) -> None:
@@ -200,7 +217,7 @@ def three_cycles(run: Path, f_target: float):
     meta = json.loads((run / "meta.json").read_text())
     fs = meta["raw"]["fs_hz"]
     raw = np.fromfile(run / "raw.f32", dtype=np.float32).reshape(-1, 2)
-    s = {c: v[4:] for c, v in sweep_rows(run).items()}    # frames after the ramp-in
+    s = sweep_rows(run)
     k = int(np.argmin(np.abs(s["f_hz"] - f_target)))
     # the status row covers the frame ending at t_s; take three cycles in its middle
     centre = round(s["t_s"][k] * fs) - meta["settings"]["control"]["frame_size"] // 2
@@ -244,6 +261,186 @@ def fig_open_closed(open_run: Path, closed_run: Path, out: Path) -> None:
         a.text(t[-1], ref, f"required ±{ref:.2g} g ", color=INK, fontsize=7,
                ha="right", va="bottom")
     save(fig, out, "open_vs_closed.png")
+
+
+def stepped_data(run: Path):
+    with open(run / "steps.csv") as fh:
+        steps = list(csv.DictReader(fh))
+    with open(run / "status.csv") as fh:
+        rows = [r for r in csv.DictReader(fh) if r["step"] and r["err_db"]]
+    by_step = {}
+    for r in rows:
+        by_step.setdefault(r["step"], []).append(r)
+    return steps, rows, by_step
+
+
+def fig_stepped(run: Path, out: Path) -> None:
+    steps, rows, by_step = stepped_data(run)
+    meta = json.loads((run / "meta.json").read_text())
+    settle_min = meta["profile"]["settle_s"]
+    block_s = meta["settings"]["control"]["frame_size"] / 2 / meta["raw"]["fs_hz"]         if "raw" in meta else 0.0                  # t_s marks the end of each block
+    levels = sorted({float(s["level_db"]) for s in steps})
+    fig, axes = plt.subplots(2, 2, figsize=(WIDTH_IN, 5.6), constrained_layout=True)
+    (ax_err, ax_set), (ax_h, ax_lin) = axes
+    h_ref = {}
+    for i, level in enumerate(levels):
+        sel = [s for s in steps if float(s["level_db"]) == level]
+        f = np.array([float(s["f_hz"]) for s in sel])
+        ref = float(sel[0]["ref_pk_g"])
+        name = f"{ref:.3g} g ({level:+g} dB)"
+        shift = 1 + 0.012 * (i - 1)                       # separate the levels a little
+        mean = -np.array([float(s["err_db"]) for s in sel])
+        lo, hi = [], []
+        settle = []
+        for s in sel:
+            dw = [-float(r["err_db"]) for r in by_step[s["step"]] if r["state"] == "dwell"]
+            lo.append(min(dw))
+            hi.append(max(dw))
+            before = [float(r["t_s"]) for r in by_step[s["step"]] if r["state"] != "dwell"]
+            settle.append(float(s["t_start_s"]) - min(before) + block_s if before else 0.0)
+        ax_err.vlines(f * shift, lo, hi, color=SERIES[i], lw=1.0)
+        ax_err.plot(f * shift, mean, "o", color=SERIES[i], ms=3.5, label=name)
+        ax_set.plot(f, settle, "o-", color=SERIES[i], ms=3.5, lw=0.8, label=name)
+        h = np.array([float(s["h_mag_g_per_v"]) for s in sel])
+        ax_h.plot(f, h, "o-", color=SERIES[i], ms=3.5, lw=0.8, label=name)
+        if i == 0:
+            h_ref = h
+        else:
+            ax_lin.plot(f, 20 * np.log10(h / h_ref), "o-", color=SERIES[i], ms=3.5, lw=0.8,
+                        label=f"{name} vs {levels[0]:+g} dB")
+    # zoomed in: the ±1 dB alarm limit would hide the ranges, so it is only named
+    span = max(np.max(np.abs(ax_err.get_ylim())), 0.02) * 1.3
+    ax_err.text(f.min(), span * 0.97, "alarm limit ±1 dB, far outside this scale",
+                color=MUTED, fontsize=7, va="top")
+    ax_err.axhline(0, color=INK, lw=0.6)
+    ax_err.set_ylim(-span, span)
+    ax_err.set_ylabel("deviation from required (dB)")
+    ax_err.set_title("a  Amplitude per step")
+    ax_set.axhline(settle_min, color=MUTED, ls="--", lw=0.8)
+    ax_set.text(f.max(), settle_min * 1.03, f"minimum {settle_min:g} s", color=MUTED,
+                fontsize=7, ha="right", va="bottom")
+    ax_set.set_ylim(0, None)
+    ax_set.set_ylabel("time to reach the level (s)")
+    ax_set.set_title("b  Settling time")
+    ax_h.set_ylabel("acceleration per drive volt (g/V)")
+    ax_h.set_title("c  Shaker response")
+    ax_lin.axhline(0, color=INK, lw=0.6)
+    ax_lin.set_ylim(-0.5, 0.5)
+    ax_lin.set_ylabel("response vs lowest level (dB)")
+    ax_lin.set_title("d  Linearity")
+    for ax in axes.flat:
+        log_freq_axis(ax, f.min() * 0.93, f.max() * 1.07)
+    ax_err.legend(loc="lower left", fontsize=6.5)
+    ax_set.legend(loc="upper right", fontsize=6.5)
+    ax_lin.legend(loc="lower left", fontsize=6.5)
+    save(fig, out, "stepped_sine.png")
+
+
+def fig_stepped_time(run: Path, out: Path) -> None:
+    steps, rows, _ = stepped_data(run)
+    meta = json.loads((run / "meta.json").read_text())
+    t = np.array([float(r["t_s"]) for r in rows])
+    fig, (ax_a, ax_f, ax_z) = plt.subplots(3, 1, figsize=(WIDTH_IN, 6.4), constrained_layout=True,
+                                           gridspec_kw={"height_ratios": [1.2, 0.8, 1.4]})
+    ax_a.plot(t, [float(r["meas_pk_g"]) for r in rows], color=SERIES[0], lw=1.0, label="measured")
+    ax_a.plot(t, [float(r["ref_pk_g"]) for r in rows], color=INK, lw=0.8, ls="--", label="required")
+    ax_a.set_ylabel("amplitude (g peak)")
+    ax_a.set_title("a  The whole stepped sine run")
+    ax_a.legend(loc="upper left")
+    ax_f.plot(t, [float(r["f_hz"]) for r in rows], color=INK, lw=1.0)
+    ax_f.set_yscale("log")
+    plain_log_ticks(ax_f.yaxis, *ax_f.get_ylim())
+    ax_f.set_ylabel("frequency (Hz)")
+    ax_f.set_title("b  Frequency steps (21 per level)")
+    for ax in (ax_a, ax_f):
+        ax.set_xlim(t[0], t[-1])
+    ax_f.set_xlabel("time (s)")
+
+    # zoom: the first level change, from the last step of level 1 into the first of level 2
+    n_freq = max(int(s["freq_index"]) for s in steps)
+    first2 = next(s for s in steps if s["level_index"] == "2" and s["freq_index"] == "1")
+    last1 = next(s for s in steps if s["level_index"] == "1" and int(s["freq_index"]) == n_freq)
+    t0, t1 = float(last1["t_end_s"]) - 0.6, float(first2["t_start_s"]) + 1.3
+    for ax in (ax_a, ax_f):
+        ax.axvspan(t0, t1, color=GRID, lw=0)
+    fs = meta["raw"]["fs_hz"]
+    raw = np.fromfile(run / "raw.f32", dtype=np.float32).reshape(-1, 2)
+    i0, i1 = round(t0 * fs), round(t1 * fs)
+    pad = round(FILTER_PAD_S * fs)
+    resp = bandpass(raw[i0 - pad:i1 + pad, 1], fs)[pad:-pad]
+    tz = np.arange(i0, i1) / fs
+    lim = 1.25 * float(np.max(np.abs(resp)))
+    ax_z.plot(tz, resp, color=SERIES[0], lw=0.4)
+    zr = [(float(r["t_s"]), float(r["ref_pk_g"]), r["state"]) for r in rows if t0 <= float(r["t_s"]) <= t1]
+    tr = np.array([z[0] for z in zr])
+    rr = np.array([z[1] for z in zr])
+    ax_z.plot(tr, rr, color=INK, lw=0.8, ls="--", label="required amplitude")
+    ax_z.plot(tr, -rr, color=INK, lw=0.8, ls="--")
+    for x, label in ((float(last1["t_end_s"]), "end of measurement\n"
+                      f"{float(last1['f_hz']):.0f} Hz, {float(last1['ref_pk_g']):.3g} g"),
+                     (float(first2["t_start_s"]), "measurement starts\n"
+                      f"{float(first2['f_hz']):.0f} Hz, {float(first2['ref_pk_g']):.3g} g")):
+        ax_z.axvline(x, color=MUTED, lw=0.8)
+        ax_z.text(x + 0.03, lim * 0.97, label, color=INK, fontsize=7, va="top")
+    # phases between the two measurements (each status row ends a half-frame)
+    block = meta["settings"]["control"]["frame_size"] / 2 / fs
+    with open(run / "status.csv") as fh:
+        states = [(float(r["t_s"]), r["state"]) for r in csv.DictReader(fh)
+                  if float(last1["t_end_s"]) < float(r["t_s"]) <= float(first2["t_start_s"])]
+    for name, label in (("fade", "fade out"), ("ramp", "ramp in"), ("settle", "settle")):
+        ts = [t_ for t_, s_ in states if s_ == name]
+        if ts:
+            ax_z.text((min(ts) - block + max(ts)) / 2, -lim * 0.97, label, color=MUTED,
+                      fontsize=7, ha="center", va="bottom")
+    j = int(np.argmax(np.abs(resp)))
+    dwell = resp[tz >= float(first2["t_start_s"])]
+    if abs(resp[j]) > 1.1 * np.max(np.abs(dwell)):
+        ax_z.annotate(f"overshoot {abs(resp[j]):.2f} g\n"
+                      f"while gliding to {float(first2['f_hz']):.0f} Hz",
+                      (tz[j], resp[j]), xytext=(tz[j] + 0.35, -lim * 0.75), fontsize=7,
+                      arrowprops={"arrowstyle": "-", "color": MUTED, "lw": 0.6})
+    ax_z.set_xlim(t0, t1)
+    ax_z.set_ylim(-lim, lim)
+    ax_z.set_xlabel("time (s)")
+    ax_z.set_ylabel("acceleration (g)")
+    ax_z.set_title("c  Measured acceleration at the first level change (gray band in a and b)")
+    ax_z.legend(loc="lower center")
+    save(fig, out, "stepped_sine_time.png")
+
+
+def fig_ringdown(run: Path, out: Path) -> None:
+    with open(run / "steps.csv") as fh:
+        steps = list(csv.DictReader(fh))
+    fs = json.loads((run / "meta.json").read_text())["settings"]["daq"]["fs_io_hz"]
+    fig, (ax_n, ax_l) = plt.subplots(1, 2, figsize=(WIDTH_IN, 2.9), constrained_layout=True,
+                                     gridspec_kw={"width_ratios": [1.3, 1]})
+    for i, s in enumerate(steps):
+        d = load_csv(run / f"ringdown_{s['step']}.csv")
+        t, y = d["t_s"], bandpass(d["response_g"], fs)
+        amp = float(s["meas_pk_g"])
+        sign = np.sign(y[np.argmin(np.abs(t - 0.001))])    # cut on a rising or falling edge
+        m = (t > -0.03) & (t < 0.03)
+        ax_n.plot(t[m] * 1000, sign * y[m] / amp, color=SERIES[i], lw=1.0, label=f"{amp:.3g} g")
+        if i == len(steps) - 1:
+            m = (t > t[0] + FILTER_EDGE_S) & (t < t[-1] - FILTER_EDGE_S)
+            ax_l.plot(t[m], y[m], color=SERIES[i], lw=0.6)
+            t_shown = t[m]
+            ax_l.set_title(f"b  The full record at {amp:.3g} g")
+    f = float(steps[0]["f_hz"])
+    for ax in (ax_n, ax_l):
+        ax.axvline(0, color=INK, lw=0.8)
+        ax.axhline(0, color=INK, lw=0.5)
+    ax_n.text(0.6, 1.02, "drive cut", color=INK, fontsize=7, va="bottom")
+    ax_n.set_xlim(-30, 30)
+    ax_n.set_ylim(-1.15, 1.25)
+    ax_n.set_xlabel("time from the cut (ms)")
+    ax_n.set_ylabel("acceleration / amplitude")
+    ax_n.set_title(f"a  Cut at {f:.0f} Hz, three levels (scaled)")
+    ax_n.legend(loc="lower right", fontsize=6.5)
+    ax_l.set_xlim(t_shown[0], t_shown[-1])
+    ax_l.set_xlabel("time from the cut (s)")
+    ax_l.set_ylabel("acceleration (g)")
+    save(fig, out, "ringdown.png")
 
 
 def fig_delays(path: Path, out: Path, used_hz: float = 51200.0) -> None:
@@ -305,6 +502,8 @@ def main() -> None:
     ap.add_argument("--frf", type=Path)
     ap.add_argument("--open", type=Path)
     ap.add_argument("--closed", type=Path)
+    ap.add_argument("--stepped", type=Path)
+    ap.add_argument("--ringdown", type=Path)
     ap.add_argument("--delays", type=Path)
     ap.add_argument("--iepe", type=Path)
     ap.add_argument("--band-hi", type=float, default=3000.0,
@@ -319,6 +518,12 @@ def main() -> None:
         fig_frf(args.frf, args.out, args.band_hi)
     if args.open and args.closed:
         fig_open_closed(args.open, args.closed, args.out)
+    if args.stepped:
+        fig_stepped(args.stepped, args.out)
+        if (args.stepped / "raw.f32").exists():
+            fig_stepped_time(args.stepped, args.out)
+    if args.ringdown:
+        fig_ringdown(args.ringdown, args.out)
     if args.delays:
         fig_delays(args.delays, args.out)
     if args.iepe:

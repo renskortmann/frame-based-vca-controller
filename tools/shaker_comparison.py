@@ -58,7 +58,7 @@ EXTRA = {
                           "Palladium P-2000 power amplifier",
                    amp="DAP-Audio Palladium P-2000",
                    amp_out="1025 W into 4 Ω per channel; no current limit",
-                   amp_mode="voltage, about 9.1 V/V (attenuator turned down; assumed)",
+                   amp_mode="voltage, 9 V/V (attenuator turned down; measured)",
                    cooling="optional air (not used in ratings)", exciter_kg="8.3 kg", half_mm=None,
                    derived={"force_random_rms_n", "accel_random_rms_g"}, static_src="derived"),
     "bk4801_4812": dict(short="B&K 4801/4812",
@@ -277,9 +277,9 @@ def build(out: Path) -> None:
         for text in (
             "The B&amp;K values come from old instruction manuals and a product datasheet; the "
             "manuals give no random ratings, so those are derived from the sine ratings.",
-            "Amplifier gains for the B&amp;K systems are assumptions (P-2000 attenuator turned "
-            "down to about 9.1 V/V, to be measured; 2707 in current mode with the gain fully "
-            "clockwise). Different settings change the input for full output and the drive limits.",
+            "Amplifier gains for the B&amp;K systems: P-2000 attenuator turned down to 9 V/V "
+            "(measured); 2707 in current mode with the gain fully clockwise (assumed). "
+            "Different settings change the input for full output and the drive limits.",
             "The P-2000 is an audio amplifier without a current limit, so for the 4809 the "
             "software drive limits are the only protection of the 5 A rms coil rating. It is "
             "specified from 20 Hz, so the 4809 profiles start at 20 Hz instead of 10 Hz.",
