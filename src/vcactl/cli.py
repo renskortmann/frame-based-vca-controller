@@ -53,6 +53,9 @@ def _add_run_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--log-dir", type=Path, default=Path("runs"), help="root directory for run logs")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     p.add_argument("--seed", type=int, default=None, help="random seed (reproducible drive)")
+    p.add_argument("--record", action="store_true",
+                   help="also save the raw drive and response (raw.f32, about 0.4 MB/s at "
+                        "51.2 kS/s)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -75,6 +78,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--duration", type=float, default=None,
                    help="random: test duration at full level in s (default: from profile); "
                         "ignored for sine profiles")
+    p.add_argument("--open-loop", type=float, default=None, metavar="HZ",
+                   help="sine sweep without control, for comparison: the drive is calibrated "
+                        "once at HZ from the pretest and never corrected (no amplitude "
+                        "tolerance; the safety checks stay)")
 
     p = sub.add_parser("loopback", help="self-test: AO looped back into a spare AI channel "
                                         "(amplifier disconnected); measures delay and drift")
@@ -271,14 +278,23 @@ def cmd_run(args, settings, shaker, profile, rates, pretest_only: bool) -> int:
     block_io = settings.control.frame_size // 2 * settings.daq.decimation
     backend = _make_backend(args, settings, shaker, block_io)
     last = [0.0]
+    f_cal = getattr(args, "open_loop", None)
+    extra = {"open_loop_cal_hz": f_cal} if f_cal is not None else {}
+    if f_cal is not None:
+        print(f"open loop: drive calibrated at {f_cal:g} Hz and not corrected (comparison run)")
     ctl = make_controller(settings, shaker, profile, backend, target_level_db=args.level,
                           duration_s=None if sine else getattr(args, "duration", None),
                           logger=logger, seed=args.seed, ai_range_v=args.ai_range,
-                          on_status=lambda row: _print_status(row, last))
-    logger.meta({"version": __version__, "shaker": shaker, "settings": settings,
-                 "profile": profile, "level_db": args.level, "ai_range": ai, "rates": rates,
-                 "sim": args.sim, "pretest_only": pretest_only,
-                 "started": time.strftime("%Y-%m-%dT%H:%M:%S")})
+                          record=args.record, on_status=lambda row: _print_status(row, last),
+                          **extra)
+    meta = {"version": __version__, "shaker": shaker, "settings": settings,
+            "profile": profile, "level_db": args.level, "ai_range": ai, "rates": rates,
+            "sim": args.sim, "pretest_only": pretest_only, "open_loop_cal_hz": f_cal,
+            "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    if args.record:
+        meta["raw"] = {"file": "raw.f32", "dtype": "float32", "fs_hz": settings.fs_control_hz,
+                       "columns": ["drive_v", "response_g"]}
+    logger.meta(meta)
 
     def request_stop(signum, frame):
         if ctl.stop_requested:          # second Ctrl-C: stop immediately (AO forced to 0 V)
@@ -307,7 +323,9 @@ def cmd_run(args, settings, shaker, profile, rates, pretest_only: bool) -> int:
               + (f", predicted drive {info['predicted_drive_rms_v']:.3f} V rms"
                  if "predicted_drive_rms_v" in info else "")
               + (f", predicted drive {info['predicted_drive_pk_v']:.3f} V peak"
-                 if "predicted_drive_pk_v" in info else ""))
+                 if "predicted_drive_pk_v" in info else "")
+              + (f", predicted open-loop peak {info['predicted_open_loop_pk_g']:.2f} g"
+                 if "predicted_open_loop_pk_g" in info else ""))
     print(f"result : {result.reason}")
     if result.meas_rms_g is not None:
         print(f"final  : ref {result.ref_rms_g:.3f} g rms, meas {result.meas_rms_g:.3f} g rms "
@@ -332,6 +350,12 @@ def main(argv=None) -> int:
         validate_setup(settings, shaker)
         settings, rates = resolve_rates(profile, shaker, settings)
         args.ai_range = _ai_range_override(args, settings)
+        f_cal = getattr(args, "open_loop", None)
+        if f_cal is not None and not (isinstance(profile, SineProfile)
+                                      and profile.kind == "sine_sweep"
+                                      and profile.f_lo <= f_cal <= profile.f_hi):
+            raise ConfigError("--open-loop needs a sine sweep profile and a frequency inside "
+                              "its band")
     except ConfigError as exc:
         print(f"configuration error: {exc}", file=sys.stderr)
         return 2

@@ -52,8 +52,15 @@ class Estimate:
 
 class SineController(ControllerBase):
     def __init__(self, settings: Settings, shaker: ShakerConfig, profile: SineProfile,
-                 backend: DaqBackend, **kwargs):
+                 backend: DaqBackend, *, open_loop_cal_hz: float | None = None, **kwargs):
         super().__init__(settings, shaker, profile, backend, **kwargs)
+        if open_loop_cal_hz is not None and (profile.kind != "sine_sweep"
+                                             or not profile.f_lo <= open_loop_cal_hz <= profile.f_hi):
+            raise ValueError("open loop needs a sine sweep and a calibration frequency inside "
+                             f"its band ({profile.f_lo:g}-{profile.f_hi:g} Hz)")
+        # open loop (comparison only): the drive is calibrated once at this frequency from the
+        # pretest FRF and never corrected, like a shaker without a controller
+        self.open_loop_cal_hz = open_loop_cal_hz
         self.sc = settings.sine
         self.tol = profile.tolerance
         self.gain = self.sc.correction_gain * min(1.0, TUNED_LOOP_BLOCKS / (self.P + 2))
@@ -113,6 +120,15 @@ class SineController(ControllerBase):
             raise AbortError(f"pretest: profile needs about {d_max:.2f} V peak drive at "
                              f"{f_worst:.1f} Hz; limit is {limit:.2f} V peak "
                              "(max_drive_v, sqrt(2) * max_drive_rms_v)")
+        if self.open_loop_cal_hz is not None:
+            h = np.array([self._h_at(fi) for fi in f])
+            resp = p.accel_pk_g(f) * k * h / self._h_at(self.open_loop_cal_hz)
+            r_max = float(np.max(resp))
+            self.pretest_info["predicted_open_loop_pk_g"] = r_max
+            if r_max > self.settings.sensor.range_g_pk:
+                raise AbortError(f"pretest: open loop would reach about {r_max:.2f} g peak at "
+                                 f"{float(f[int(np.argmax(resp))]):.1f} Hz, above the sensor "
+                                 f"range {self.settings.sensor.range_g_pk:g} g")
 
     # ------------------------------------------------------------------ signal generation
     def _h_at(self, f: float) -> float:
@@ -120,6 +136,8 @@ class SineController(ControllerBase):
         return float(np.exp(np.interp(math.log(f), self._h_logf, self._h_logmag)))
 
     def _feed_forward(self, f: float, ref_g: float) -> float:
+        if self.open_loop_cal_hz is not None:
+            return ref_g / self._h_at(self.open_loop_cal_hz)
         return ref_g / self._h_at(f) * 10 ** (self.corr_db / 20)
 
     def _ref(self, f: float, level_db: float) -> float:
@@ -212,7 +230,12 @@ class SineController(ControllerBase):
         self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
         if est is not None:
             self.monitor.check_response_peak(est.meas_pk_g)
-            self.monitor.check_open_loop(est.meas_pk_g, est.ref_pk_g)
+            expected = est.ref_pk_g
+            if self.open_loop_cal_hz is not None:     # the uncorrected response, from the FRF
+                expected *= self._h_at(est.f_hz) / self._h_at(self.open_loop_cal_hz)
+            self.monitor.check_open_loop(est.meas_pk_g, expected)
+        # open loop: no amplitude-tolerance abort and no correction
+        if est is not None and self.open_loop_cal_hz is None:
             if strict and abs(est.err_db) > self.tol.abort_db:
                 self._bad_blocks += 1
                 if self._bad_blocks >= ABORT_BLOCKS:
@@ -299,7 +322,8 @@ class SineController(ControllerBase):
         self._new_step("sweep", level)
         self.f = p.f_start_hz
         self._ramp_in(p.f_start_hz, level)
-        self._settle(p.f_start_hz, level, 0.0, SWEEP_SETTLE_LIMIT_S)
+        if self.open_loop_cal_hz is None:          # open loop never reaches the reference
+            self._settle(p.f_start_hz, level, 0.0, SWEEP_SETTLE_LIMIT_S)
         d_oct = p.rate_oct_min / 60 * self.half / self.fs        # octaves per half-frame
         for i in range(p.sweeps):
             f_to = p.f_end_hz if i % 2 == 0 else p.f_start_hz

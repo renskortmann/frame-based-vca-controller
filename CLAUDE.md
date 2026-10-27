@@ -276,9 +276,19 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
 
 - Sine sweep (`src/vcactl/sine.py`) ran on the BK 4809 setup (2026-10-26, `sine_sweep` at
   -12 dB and 0 dB: 20-2000 Hz in 6.6 min, all 4983 steps within +/-0.1 dB, through the
-  200 Hz resonance within 0.04 dB; at 0 dB 0.5 g with at most 69 mV peak drive). Stepped sine and ring-down have only run in the simulator.
+  150 Hz resonance within 0.04 dB; at 0 dB 0.5 g with at most 69 mV peak drive). Stepped sine and ring-down have only run in the simulator.
   They control the base (one AI channel); response-controlled and phase-resonant sine (as in
   the TRC joint-damping tests) need a second AI channel and are deferred.
+
+- Report support (2026-10-27): `--record` (raw.f32 via `RunLogger.raw`, recorded in
+  `ControllerBase._io` at the control rate) and `--open-loop HZ` (`SineController`
+  `open_loop_cal_hz`: constant drive from |H(HZ)|, no correction, no tolerance abort or settle;
+  the open-loop check compares with the expected uncorrected response). Comparison only, sine
+  sweeps only. `tools/report_figures.py` and `tools/iepe_startup.py` make the report figures;
+  the report is the Nextcloud `shaker_tests_2026-10-26.md` (figures in `figures/` beside it).
+  Hardware comparison (2026-10-27, `sine_sweep` 0 dB, magnet mount): open loop at 1 kHz
+  (17.1 mV) gave 0.11 g at 20 Hz to 0.85 g at 150 Hz, 46 % of the sweep beyond 3 dB; closed
+  loop 0.498-0.505 g. The 4809's low resonance peaks at 150 Hz (broad, 100-300 Hz).
 
 - The laser displacement sensor as control sensor (commit dfadd62) was dropped on 2026-10-14 and
   its code and config removed; the loop is always closed with the accelerometer.
@@ -287,7 +297,7 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   First `run` on hardware: `low_g` at -12 dB for 30 s (2026-10-26): -0.03 dB rms error, line
   errors 0.49 dB std (max +/-1.8 dB, no alarms), coherence >= 0.967. Measured H is 28-31 g/V
   above 1 kHz, matching the mass line of the shaker file (4.55 A/V x 6.4 N/A / 0.105 kg); it
-  peaks near 200 Hz and is 8 g/V at 20 Hz (voltage drive, not in the simulator). Also passed
+  peaks near 150 Hz and is 8 g/V at 20 Hz (voltage drive, not in the simulator). Also passed
   at -6 dB (30 s) and 0 dB (60 s: +0.10 dB, line std 0.65 dB, no alarms, peak 2.62 g, drive
   0.019 V rms, no clipping). The BK 4801/4812, stepped sine, ring-down and higher levels (they need a
   wider-range sensor) are untested on hardware.

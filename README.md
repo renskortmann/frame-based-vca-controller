@@ -470,9 +470,18 @@ Only for `pretest` and `run`:
 - `--log-dir` sets the run output root (default `runs/`).
 - `--yes` skips the confirmation prompt before driving real hardware.
 - `--seed` fixes the random drive (reproducible runs).
+- `--record` also saves the raw drive and response (`raw.f32`, see [Run output](#run-output)):
+  about 0.4 MB/s at 51.2 kS/s, 160 MB for a 6.6 min sweep.
 
-Only for `run`: `--duration` sets the test duration at full level in s (random profiles; default
-from the profile).
+Only for `run`:
+
+- `--duration` sets the test duration at full level in s (random profiles; default from the
+  profile).
+- `--open-loop HZ` (sine sweeps only) runs the sweep *without* control, for comparison: the
+  drive is calibrated once at HZ from the pretest and never corrected, as with a shaker and
+  amplifier alone. The amplitude tolerance does not apply, but the safety checks do: drive
+  limit, AI overload, sensor range (also predicted after the pretest) and the open-loop check,
+  which then compares with the expected uncorrected response.
 
 `loopback` drives low-level noise (`--level-v`, default 0.05 V rms) at the DAQ's highest
 automatic rate for `--duration` s (default 120) and reads it back on `--loopback-channel`
@@ -654,6 +663,14 @@ error, drive amplitude, phase) and, for stepped sine:
 - `events.csv` and `ringdown_<step>.csv`: drive cuts and the recorded decays (see
   [Sine control](#sine-control)).
 
+With `--record`, `raw.f32` holds every sample as float32 pairs (drive in V, response in g) at
+the control rate; `meta.json` gives the rate under `raw`. Sample k is at `t = k / fs`, the same
+time base as `t_s` in `status.csv`:
+
+```python
+raw = np.fromfile("raw.f32", dtype=np.float32).reshape(-1, 2)   # columns: drive_v, response_g
+```
+
 ## Tools
 
 Plot a run afterwards:
@@ -661,6 +678,13 @@ Plot a run afterwards:
 ```
 python tools/plot_run.py runs/<run-dir>                  # add --save out.png for a file
 ```
+
+`tools/report_figures.py` draws report figures (PNG, 16 cm wide) from several runs: random runs
+against the tolerance, sine sweep error and drive, the pretest response with the mounting error,
+open against closed loop (two sweeps recorded with `--record`, one with `--open-loop`), the
+loopback delay per rate and the IEPE start-up. Each figure is drawn when its inputs are given;
+see the script's docstring. `tools/iepe_startup.py` records the IEPE start-up of the control
+accelerometer (AI only; the amplifier may stay on).
 
 `tools/shaker_comparison.py` builds `shaker_comparison.pdf`, which compares the configured shakers
 (ratings, amplifier and drive limits, payload limits). The PDF is kept in the Nextcloud folder

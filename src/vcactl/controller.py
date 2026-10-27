@@ -119,11 +119,12 @@ class ControllerBase:
                  duration_s: float | None = None, logger: RunLogger | None = None,
                  seed: int | None = None,
                  on_status: Callable[[dict], None] | None = None,
-                 ai_range_v: float | str | None = None):
+                 ai_range_v: float | str | None = None, record: bool = False):
         validate_setup(settings, shaker)
         settings.require_rates(type(self).__name__)
         self.settings, self.shaker, self.profile = settings, shaker, profile
         self.backend, self.logger, self.on_status = backend, logger, on_status
+        self.record = record and logger is not None    # raw drive and response to raw.f32
         c, d = settings.control, settings.daq
         self.c, self.s = c, settings.safety
         self.target_level_db = target_level_db
@@ -208,6 +209,8 @@ class ControllerBase:
         ai = self.backend.read(self.block_io)
         r = self.decim.process(ai) / self.v_per_g
         self.resp_hist.append(r)
+        if self.record:
+            self.logger.raw(np.clip(x, -lim, lim), r)
         self.samples += self.half
         self._update_spectra()
         return StepResult(drive_rms_v=float(np.sqrt(np.mean(y**2))),

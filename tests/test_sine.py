@@ -151,6 +151,50 @@ def test_open_loop_aborts(settings, tv51110, tmp_path):
     assert_safe_stop(tv51110, backend)
 
 
+ONE_SWEEP = SWEEP.replace("sweeps = 2", "sweeps = 1")
+
+
+def test_open_loop_sweep_with_raw_record(settings, tv51110, tmp_path):
+    """--open-loop: constant drive calibrated at 500 Hz, never corrected; the run completes
+    although the response leaves the tolerance. --record: raw.f32 holds every sample."""
+    logger = RunLogger(tmp_path, "open", SINE_STATUS_FIELDS)
+    rows = []
+    ctl, backend, res = run(settings, tv51110, write_profile(tmp_path, ONE_SWEEP), rows=rows,
+                            logger=logger, record=True, open_loop_cal_hz=500.0)
+    logger.close()
+    assert res.completed, res.reason
+    sweep = [r for r in rows if r["state"].startswith("sweep") and "err_db" in r]
+    drive = np.array([r["drive_pk_v"] for r in sweep[4:]])     # frames after the ramp-in
+    assert drive.max() / drive.min() < 1.001                     # never corrected
+    err = np.array([r["err_db"] for r in sweep])
+    assert np.max(np.abs(err)) > ctl.tol.abort_db                # outside the abort tolerance
+    f = np.array([r["f_hz"] for r in sweep])
+    assert np.min(np.abs(err[(f > 400) & (f < 600)])) < 0.5      # right at the calibration
+    raw = np.fromfile(logger.dir / "raw.f32", dtype=np.float32).reshape(-1, 2)
+    assert len(raw) == ctl.samples
+    i = round(sweep[-1]["t_s"] * ctl.fs)                         # t_s = sample index / fs
+    tail = raw[i - ctl.N:i, 1]
+    assert np.max(np.abs(tail)) == pytest.approx(sweep[-1]["meas_pk_g"], rel=0.05)
+    assert_safe_stop(tv51110, backend)
+
+
+def test_open_loop_keeps_the_safety_checks(settings, tv51110, tmp_path):
+    prof = write_profile(tmp_path, ONE_SWEEP)
+    _, backend, res = run(settings, tv51110, prof, open_loop_cal_hz=500.0,
+                          sim_kwargs={"disconnect_after_s": 15.0})
+    assert not res.completed and "open loop" in res.reason, res.reason
+    assert_safe_stop(tv51110, backend)
+    # the uncorrected response would exceed the sensor range: stopped after the pretest
+    narrow = dataclasses.replace(settings, sensor=dataclasses.replace(settings.sensor,
+                                                                      range_g_pk=0.6))
+    ctl, backend, res = run(narrow, tv51110, prof, open_loop_cal_hz=500.0)
+    assert not res.completed and "open loop would reach" in res.reason, res.reason
+    assert ctl.run_time_s == 0
+    with pytest.raises(ValueError, match="open loop"):
+        run(settings, tv51110, load_profile(PROFILES / "stepped_sine.toml"),
+            open_loop_cal_hz=100.0)
+
+
 def test_insufficient_drive_aborts_after_pretest(settings, tv51110, tmp_path):
     # 5 g needs about 0.42 V peak; the limit is min(0.3, sqrt(2) * 0.1) = 0.14 V peak
     sh = dataclasses.replace(tv51110, max_drive_rms_v=0.1, max_drive_v=0.3)

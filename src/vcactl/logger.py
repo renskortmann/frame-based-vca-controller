@@ -1,5 +1,5 @@
-"""Run logging: metadata JSON, per-frame status CSV, PSD snapshot CSVs, and for sine tests
-step/event tables and ring-down time series."""
+"""Run logging: metadata JSON, per-frame status CSV, PSD snapshot CSVs, for sine tests
+step/event tables and ring-down time series, and optionally the raw drive and response."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ class RunLogger:
         self.fields = list(fields)
         self._status = csv.DictWriter(self._status_fh, fieldnames=self.fields)
         self._status.writeheader()
+        self._raw_fh = None
 
     def meta(self, data: dict) -> None:
         with open(self.dir / "meta.json", "w") as fh:
@@ -64,5 +65,14 @@ class RunLogger:
         np.savetxt(path, data, delimiter=",", header=",".join(columns), comments="", fmt="%.6e")
         return path
 
+    def raw(self, drive: np.ndarray, response: np.ndarray) -> None:
+        """Append one half-frame to ``raw.f32``: float32 pairs (drive V, response g) at the
+        control rate; sample k is at t = k / fs, the time base of ``status.csv``."""
+        if self._raw_fh is None:
+            self._raw_fh = open(self.dir / "raw.f32", "ab")
+        np.column_stack([drive, response]).astype(np.float32).tofile(self._raw_fh)
+
     def close(self) -> None:
         self._status_fh.close()
+        if self._raw_fh is not None:
+            self._raw_fh.close()

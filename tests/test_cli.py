@@ -12,6 +12,15 @@ def test_check_pass_and_fail(capsys):
     assert "FAIL" in capsys.readouterr().out
 
 
+def test_open_loop_needs_a_sine_sweep(capsys):
+    base = ["run", "--sim", "--shaker", "bk4809", "--open-loop", "1000"]
+    assert main(base + ["--profile", "low_g"]) == 2
+    assert main(base + ["--profile", "stepped_sine"]) == 2
+    assert main(["run", "--sim", "--shaker", "bk4809", "--profile", "sine_sweep",
+                 "--open-loop", "5000"]) == 2                     # outside 20-2000 Hz
+    assert capsys.readouterr().err.count("--open-loop needs a sine sweep") == 3
+
+
 def test_run_sim(tmp_path, capsys):
     rc = main(["run", "--sensor", TEST_SENSOR, "--sim", "--shaker", "tv52110", "--profile",
                str(PROFILES / "sloped.toml"), "--duration", "3",
