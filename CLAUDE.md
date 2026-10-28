@@ -121,7 +121,8 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
     reads 10.5 V for 0.1 s and settles in about 2.4 s; the excitation then stays on between
     DAQmx tasks. `NiDaq.start` therefore runs `_settle_iepe` (AI-only task, same channel, rate
     and range) until `wait_until_settled` sees the peak below 2 % of the range for 0.5 s
-    (DaqFault after 30 s). Not in the UL backend (DT9837A) yet. Verified: pretest after a
+    (DaqFault after 30 s). The wait (`NiDaq.settle_s`) is printed after the run and saved as
+    `iepe_settle_s` in meta.json (rewritten after the run). Not in the UL backend (DT9837A) yet. Verified: pretest after a
     power cycle passed (2026-10-26).
   - Decimation 1 (now the DSA default) has run only in the simulator. Tests that need exact
     numbers pin the old fixed rates with `conftest.pin_rates`.
@@ -139,6 +140,11 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   the ADC adds 39 samples at every rate (DAQmx `ai_remove_filter_delay` is False), the DAC
   23-64 samples depending on the AO divider n. The PXIe-4468 comment says its driver
   compensates the AI delay; unverified. Coupling, IEPE and control runs are still untested.
+  A second USB-4431 (serial 1936B61, 2026-10-28) gave the same delay at all 20 rates within
+  0.01 samples (`runs/20261028-usb4431_1936B61_delay_sweep`) and the same results in every
+  hardware test (random, sweeps, open loop, stepped sine, ring-down, IEPE start-up 2.40 s).
+  Both were named Dev1 in NI MAX. A sensor that has been unplugged settles slower at its first
+  IEPE start-up (3.3 s, undershoot -3.6 V at 1.6 s); repeat the capture for a fair comparison.
 - Decimation 1 needs both an AI anti-aliasing and an AO reconstruction filter
   (`limits.antialias_filter`, `ao_reconstruction_filter`); otherwise the FIR interpolates the
   drive (USB-6211, NI 9263).

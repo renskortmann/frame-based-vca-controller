@@ -35,6 +35,27 @@ def test_run_sim(tmp_path, capsys):
     assert meta["rates"]["frame_size"] == meta["settings"]["control"]["frame_size"] != "auto"
 
 
+def test_iepe_settle_time_reported(tmp_path, capsys, monkeypatch):
+    """A backend that waited for the IEPE sensor (NiDaq.settle_s): printed and in meta.json."""
+    from vcactl import cli
+    from vcactl.daq.sim import SimulatedDaq
+
+    class SettlingSim(SimulatedDaq):
+        def start(self, prefill, ai_range_v):
+            super().start(prefill, ai_range_v)
+            self.settle_s = 2.4
+
+    args = ["pretest", "--sensor", TEST_SENSOR, "--sim", "--shaker", "tv52110", "--profile",
+            "sloped", "--seed", "1"]
+    assert main(args + ["--log-dir", str(tmp_path / "plain")]) == 0
+    assert "IEPE" not in capsys.readouterr().out             # the simulator does not settle
+    monkeypatch.setattr(cli, "_make_backend", lambda a, s, sh, *rest: SettlingSim(s, sh, seed=1))
+    assert main(args + ["--log-dir", str(tmp_path / "iepe")]) == 0
+    assert "IEPE   : sensor output settled after 2.4 s" in capsys.readouterr().out
+    (run_dir,) = (tmp_path / "iepe").iterdir()
+    assert json.loads((run_dir / "meta.json").read_text())["iepe_settle_s"] == 2.4
+
+
 def test_check_prints_rates(capsys):
     assert main(["check", "--shaker", "bk4809", "--profile", "low_g"]) == 0
     assert ("rates  : I/O 100 kS/s, decimation 10, control 10 kS/s, frame 2048 (df 4.88 Hz), "

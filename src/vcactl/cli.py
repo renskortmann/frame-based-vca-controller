@@ -315,6 +315,11 @@ def cmd_run(args, settings, shaker, profile, rates, pretest_only: bool) -> int:
         logger.close()
 
     print()
+    settle_s = getattr(backend, "settle_s", None)   # NiDaq with IEPE on: wait for the sensor
+    if settle_s:
+        print(f"IEPE   : sensor output settled after {settle_s:.1f} s")
+        meta["iepe_settle_s"] = round(settle_s, 2)
+        logger.meta(meta)
     info = getattr(ctl, "pretest_info", None)
     if info:
         print("pretest: response {response_rms_g:.3g} g rms, noise {noise_rms_g:.3g} g rms, "

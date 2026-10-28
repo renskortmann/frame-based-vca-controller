@@ -329,7 +329,11 @@ to the specimen. How it is powered depends on the DAQ:
   USB-4431 sits at the 10.5 V end of the range for 0.1 s and settles in about 2.4 s. The excitation
   stays on between runs. Before every run, the NI backend therefore switches it on in a separate
   AI-only task and waits until the output has stayed within 2 % of the AI range for 0.5 s (at
-  most 30 s; otherwise the run stops with a DAQ fault). The DT9837A backend does not do this yet.
+  most 30 s; otherwise the run stops with a DAQ fault). The wait is printed after the run
+  (`IEPE   : sensor output settled after 2.4 s`) and saved as `iepe_settle_s` in `meta.json`;
+  a wait that grows over time can point to a cable or connector problem. A sensor that has
+  just been plugged in can take longer at its first start-up (3.3 s seen with the PCB 352B).
+  The DT9837A backend does not do this yet.
 - **DT9837A:** connect the accelerometer to AI 0 (BNC), IEPE 4 mA with AC coupling, and AO 0
   (BNC, ≥ 3.3 kΩ load) to the amplifier input.
 - **USB-6211:** it has no IEPE excitation, so an external IEPE signal conditioner powers the
@@ -653,7 +657,8 @@ Recommended first test on hardware:
 
 Each run directory (under `--log-dir`, default `runs/`) contains:
 
-- `meta.json`: all configs (with the rates and frame size of the run) and the `rates` choice.
+- `meta.json`: all configs (with the rates and frame size of the run) and the `rates` choice;
+  with IEPE from an NI DAQ also `iepe_settle_s`, the wait for the sensor before the run.
 - `status.csv`: one row per half-frame.
 - `pretest_frf.csv`: FRF, coherence and noise floor.
 - `psd_<t>s.csv` snapshots and `psd_final.csv`: reference, control PSD, tolerance bands,
