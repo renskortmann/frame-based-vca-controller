@@ -1,5 +1,5 @@
 # PCB Piezotronics 356B18: triaxial ICP (IEPE) accelerometer, high sensitivity, ceramic shear.
-# Values from Controller + DAQ + accellerometers/PCB accelerometers/356b18.pdf (spec sheet Rev H,
+# Values from Controller + DAQ + accelerometers/PCB accelerometers/356b18.pdf (spec sheet Rev H,
 # manual 21354) in the Nextcloud project folder.
 # Select with --sensor pcb356b18 (the default is the PCB 352B).
 #

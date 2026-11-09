@@ -9,7 +9,7 @@ This file only records what is not obvious from the code or README.
 - Setup: `python -m venv .venv && .venv/bin/pip install -e ".[plot,test]"`, then `.venv/bin/pytest`.
   All tests use the simulated backend, so no hardware is needed.
 - NI-DAQmx does not work under WSL2. In WSL2 always use `--sim`. OS per DAQ (NI's OS
-  compatibility table, `Controller + DAQ + accellerometers/NI/NI Hardware and Software Operating
+  compatibility table, `Controller + DAQ + accelerometers/NI/NI Hardware and Software Operating
   System Compatibility Data.xlsx` in the Nextcloud folder, and the DT9837 manual): USB-6211 and
   USB-4431 Windows only; PXIe-4468 and the cDAQ-9174 with NI 9232/9234/9260/9263 Windows and
   Linux; DT9837A Linux only (UL for Linux, `uldaq`; Data Translation's Windows driver is not
@@ -261,13 +261,13 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   in WSL `/mnt/c/Users/rkortmann/Nextcloud/CITG-macrolab/Projecten/CSAA04 EPICA DP (HF Shakers Alessandro)`.
   - `Shakers/`: shaker and amplifier datasheets/manuals (TIRA, BK 4809, Palladium P-2000, BK 4801/4812/2707),
     the RFQ template, the shaker comparison (`shaker_comparison.pdf`, .docx) and other candidates.
-  - `Controller + DAQ + accellerometers/`: `NI/` (NI DAQ and C Series specifications, the DAQmx
+  - `Controller + DAQ + accelerometers/`: `NI/` (NI DAQ and C Series specifications, the DAQmx
     user manual and the OS compatibility table), `MCC DAQ/` (the DT9837 datasheet and product
     manual), `PCB accelerometers/` (352B, 356B18, conditioners), other sensor datasheets
     (ADXL326, optoNCDT 1220, VR9700) and the presentation below.
   - `Ommatidia Lidar/`: Q1/Q2 lidar and VR9700 integration documents.
 - Presentation for the researcher (the user's colleague in the same department; the user is the lab
-  engineer supporting them): `Controller + DAQ + accellerometers/shaker_controller_options_draft.pptx` in that folder.
+  engineer supporting them): `Controller + DAQ + accelerometers/shaker_controller_options_draft.pptx` in that folder.
   - The user edits it by hand in PowerPoint. Always edit that file (python-pptx on a copy, then copy
     back); never regenerate it with `tools/client_options_deck.py`, which only built the first draft
     (with € prices and a client tone that were later removed) and would overwrite the edits.
