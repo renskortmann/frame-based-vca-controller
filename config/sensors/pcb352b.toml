@@ -1,5 +1,5 @@
 # PCB Piezotronics 352B: single-axis ICP (IEPE) accelerometer, ceramic shear, titanium.
-# Values from Controller + DAQ + accellerometers/PCB accelerometers/352b_c.pdf (spec sheet Rev C,
+# Values from Controller + DAQ + accelerometers/PCB accelerometers/352b_c.pdf (spec sheet Rev C,
 # ECN 26574, spec number 18862) in the Nextcloud project folder.
 # Select with --sensor pcb352b (the default).
 #

@@ -106,8 +106,9 @@ Cross-file rules:
 
 The third-party datasheets and manuals (shakers, amplifiers, DAQs, sensors) are not in this
 repository. They are in the project's Nextcloud folder (`CSAA04 EPICA DP (HF Shakers
-Alessandro)`): `Shakers/` and `Controller + DAQ + accellerometers/`. The source comments in `config/shakers/*.toml`,
-`config/daq/*.toml` and `config/sensors/*.toml` refer to them by file name.
+Alessandro)`): `Shakers/` and `Controller + DAQ + accelerometers/`. The source comments in
+`config/shakers/*.toml`, `config/daq/*.toml` and `config/sensors/*.toml` refer to them by file
+name.
 
 ### Shakers (`--shaker`)
 
@@ -889,7 +890,7 @@ python tools/shaker_comparison.py --out "<Nextcloud folder>/Shakers/shaker_compa
 
 `tools/client_options_deck.py` built the first draft of the shaker and controller options
 presentation from the same shaker data. The deck has since been edited by hand in the Nextcloud
-folder (`Controller + DAQ + accellerometers/shaker_controller_options_draft.pptx`); do not rerun the script over
+folder (`Controller + DAQ + accelerometers/shaker_controller_options_draft.pptx`); do not rerun the script over
 it, because that would overwrite the edits.
 
 ## Development
