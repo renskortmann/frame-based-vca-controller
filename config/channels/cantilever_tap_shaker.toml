@@ -1,0 +1,28 @@
+# Cantilever setup, tap test of the shaker body and trunnion (procedure step 2): the impact hammer
+# and the three axes of the PCB 356B18 on the USB-4431. No control channel (vcactl tap).
+# The 356B18 needs a 4-pin to 3 x BNC breakout cable. Calibration of LW266119 from the user.
+name = "cantilever tap test, shaker body and trunnion"
+
+[[channel]]
+name = "hammer"
+physical = "ai0"
+sensor = "bk8206"
+role = "hammer"
+
+[[channel]]
+name = "body_x"
+physical = "ai1"
+sensor = "pcb356b18"
+sensitivity = 980.0
+
+[[channel]]
+name = "body_y"
+physical = "ai2"
+sensor = "pcb356b18"
+sensitivity = 1054.0
+
+[[channel]]
+name = "body_z"
+physical = "ai3"
+sensor = "pcb356b18"
+sensitivity = 1048.0

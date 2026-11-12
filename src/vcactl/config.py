@@ -8,7 +8,7 @@ import sys
 import typing
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -89,6 +89,12 @@ class DaqLimits:
     # queue (daq.ao_queue_blocks) is raised per run to cover it (see vcactl.rates)
     ao_fifo_samples: int = 0
     ao_transfer_s: float = 0.0
+    # AI channels in one task with the device's terminal configuration (USB-6211: 8 differential);
+    # 0: not checked
+    ai_channels_max: int = 0
+    # multiplexed devices (one ADC for all channels): channels x rate may not exceed this;
+    # 0: simultaneous sampling, not checked
+    ai_aggregate_rate_hz: float = 0.0
 
     def ao_lead_samples(self, fs_io_hz: float) -> int:
         """AO samples the driver holds ahead of the output at ``fs_io_hz``."""
@@ -124,18 +130,89 @@ class DaqConfig:
     conditioner_gain: float = 1.0         # gain of an external IEPE conditioner between sensor and AI
 
 
+SENSOR_UNITS = ("g", "N")
+
+
 @dataclass(frozen=True)
 class SensorConfig:
-    """Control accelerometer, from its data sheet and calibration."""
+    """An accelerometer (unit g) or force sensor (unit N), from its data sheet and calibration.
+    The control sensor must be an accelerometer."""
     name: str
-    sensitivity_mv_per_g: float           # calibrated sensitivity of the axis used for control
-    range_g_pk: float                     # measurement range
-    f_min_hz: float                       # frequency range (data-sheet tolerance band)
-    f_max_hz: float
-    mass_kg: float = 0.0                  # added to safety.payload_kg
+    f_min_hz: float = 0.0                 # frequency range (data-sheet tolerance band); 0, 0:
+    f_max_hz: float = 0.0                 # not given (allowed for recorded channels only)
+    unit: str = "g"
+    sensitivity_mv_per_g: float = 0.0     # calibrated sensitivity of the axis used (unit g)
+    range_g_pk: float = 0.0               # measurement range (unit g)
+    sensitivity_mv_per_n: float = 0.0     # calibrated sensitivity (unit N)
+    range_n_pk: float = 0.0               # measurement range (unit N)
+    mass_kg: float = 0.0                  # added to safety.payload_kg (control sensor)
     iepe_min_ma: float = 0.0              # IEPE excitation current range; 0, 0 = not IEPE
     iepe_max_ma: float = 0.0
     iepe_bias_max_v: float = 0.0          # highest IEPE output bias voltage; 0: unknown, not checked
+
+    @property
+    def mv_per_unit(self) -> float:
+        return self.sensitivity_mv_per_n if self.unit == "N" else self.sensitivity_mv_per_g
+
+    @property
+    def range_pk(self) -> float:
+        return self.range_n_pk if self.unit == "N" else self.range_g_pk
+
+    @property
+    def is_iepe(self) -> bool:
+        return self.iepe_max_ma > 0
+
+
+CHANNEL_ROLES = ("control", "response", "force", "hammer", "loopback")
+AUX_ROLES = ("load", "drive_ref")
+
+
+@dataclass(frozen=True)
+class AuxConfig:
+    """A second DAQ that records alongside the control DAQ (``[aux]`` of a channels file: the
+    treatment load cells on a USB-6211). Its clock is not shared: both start on one trigger
+    (``trigger_out`` of the aux DAQ wired to ``trigger_in`` of the control DAQ) and the drift is
+    removed afterwards from ``drive_ref``, the AO drive recorded on both (vcactl.analysis.sync)."""
+    daq: DaqConfig
+    rate_hz: float
+    channels: tuple                       # AiChannel, roles in AUX_ROLES
+    trigger_out: str = "PFI4"             # aux DAQ terminal that exports its AI start trigger
+    trigger_in: str = "PFI0"              # control DAQ terminal its AI task starts on
+
+
+@dataclass(frozen=True)
+class ChannelConfig:
+    """One ``[[channel]]`` of a channels file (``config/channels/*.toml``)."""
+    name: str                             # column name in the recordings (e.g. "force")
+    physical: str                         # AI channel on the device (e.g. "ai1")
+    sensor: str = ""                      # sensor file key or path (not for role "loopback")
+    role: str = "response"                # see CHANNEL_ROLES
+    sensitivity: float = 0.0              # calibrated mV per sensor unit; 0: the sensor file's
+    iepe_current_ma: float = -1.0         # -1: the DAQ's IEPE current for IEPE sensors, else off
+    coupling: str = ""                    # "": AC with IEPE, else the DAQ file's ai_coupling
+    range_v: Union[float, str] = "auto"   # "auto": smallest range for the sensor's full range
+
+
+@dataclass(frozen=True)
+class AiChannel:
+    """A resolved AI channel: the control channel (from the DAQ file and --sensor) or a recorded
+    channel of a channels file. ``range_v`` 0: chosen per run (control, loopback)."""
+    name: str
+    physical: str
+    role: str
+    sensor: SensorConfig
+    mv_per_unit: float
+    iepe_current_ma: float
+    coupling: str
+    range_v: float
+
+    @property
+    def unit(self) -> str:
+        return "V" if self.role in ("loopback", "drive_ref") else self.sensor.unit
+
+    @property
+    def v_per_unit(self) -> float:
+        return self.mv_per_unit / 1000
 
 
 @dataclass(frozen=True)
@@ -146,6 +223,8 @@ class ControlConfig:
     control_dof: int = 32
     frf_averages: int = 32
     correction_gain: float = 0.1
+    periodic_correction_gain: float = 0.5   # periodic random: per period (one correction each)
+    periodic_deadband_db: float = 1.0       # ... from the period's average, on lines off by more
     max_step_db: float = 1.0
     max_correction_db: float = 15.0
     coherence_min: float = 0.5
@@ -179,6 +258,7 @@ class SafetyConfig:
     ai_overload_fraction: float = 0.98
     ai_range_margin_db: float = 3.0       # auto AI range: headroom above the expected peak
     abort_rampdown_s: float = 0.05
+    force_limit_n: float = 0.0            # abort above this peak on a force channel; 0: off
 
 
 @dataclass(frozen=True)
@@ -197,6 +277,24 @@ class Settings:
     sine: SineConfig = field(default_factory=SineConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     pretest: PretestConfig = field(default_factory=PretestConfig)
+    # recorded channels besides the control channel (channels file, see load_channels)
+    extra_channels: tuple[AiChannel, ...] = ()
+    has_control: bool = True              # False: a channels file without a control channel
+    channels_name: str = ""               # name of the channels file
+    control_name: str = "control"         # name of the control channel (channels file)
+    aux: Optional[AuxConfig] = None       # second DAQ recording alongside (channels file [aux])
+
+    @property
+    def control_channel(self) -> AiChannel:
+        d = self.daq
+        return AiChannel(name=self.control_name, physical=d.ai_channel, role="control", sensor=self.sensor,
+                         mv_per_unit=self.sensor.sensitivity_mv_per_g * d.conditioner_gain,
+                         iepe_current_ma=d.iepe_current_ma, coupling=d.ai_coupling, range_v=0.0)
+
+    @property
+    def channels(self) -> tuple[AiChannel, ...]:
+        """All AI channels in read order: the control channel (if any) first."""
+        return ((self.control_channel,) if self.has_control else ()) + self.extra_channels
 
     @property
     def rates_resolved(self) -> bool:
@@ -466,14 +564,274 @@ def validate_daq(d: DaqConfig, where: str = "daq") -> None:
 
 
 def validate_sensor(sn: SensorConfig, where: str = "sensor") -> None:
-    if sn.sensitivity_mv_per_g <= 0 or sn.range_g_pk <= 0:
+    if sn.unit not in SENSOR_UNITS:
+        raise ConfigError(f"{where}: sensor.unit must be one of {_fmt(SENSOR_UNITS)}")
+    if sn.unit == "g" and (sn.sensitivity_mv_per_g <= 0 or sn.range_g_pk <= 0):
         raise ConfigError(f"{where}: sensor.sensitivity_mv_per_g and range_g_pk must be > 0")
-    if not 0 < sn.f_min_hz < sn.f_max_hz:
-        raise ConfigError(f"{where}: sensor.f_min_hz must be > 0 and < f_max_hz")
+    if sn.unit == "N" and (sn.sensitivity_mv_per_n <= 0 or sn.range_n_pk <= 0):
+        raise ConfigError(f"{where}: sensor.sensitivity_mv_per_n and range_n_pk must be > 0 "
+                          "(unit N)")
+    if (sn.f_min_hz, sn.f_max_hz) != (0.0, 0.0) and not 0 < sn.f_min_hz < sn.f_max_hz:
+        raise ConfigError(f"{where}: sensor.f_min_hz must be > 0 and < f_max_hz (or both 0: "
+                          "not given)")
     if sn.mass_kg < 0 or sn.iepe_bias_max_v < 0:
         raise ConfigError(f"{where}: sensor.mass_kg and iepe_bias_max_v must be >= 0")
     if not 0 <= sn.iepe_min_ma <= sn.iepe_max_ma:
         raise ConfigError(f"{where}: sensor.iepe_min_ma must be >= 0 and <= iepe_max_ma")
+
+
+def _check_iepe(sn: SensorConfig, current_ma: float, d: DaqConfig, where: str,
+                what: str) -> None:
+    """An IEPE current ``current_ma`` (> 0) must suit the sensor, and the sensor's bias plus its
+    swing at full range must stay below the DAQ's IEPE compliance voltage."""
+    if current_ma <= 0:
+        return
+    if not sn.is_iepe:
+        raise ConfigError(f"{where}: {what} = {current_ma:g} mA, but the {sn.name} is not an "
+                          "IEPE sensor")
+    if not sn.iepe_min_ma <= current_ma <= sn.iepe_max_ma:
+        raise ConfigError(f"{where}: {what} = {current_ma:g} mA is outside the {sn.name} range "
+                          f"{sn.iepe_min_ma:g}-{sn.iepe_max_ma:g} mA")
+    swing_v = sn.range_pk * sn.mv_per_unit / 1000
+    if sn.iepe_bias_max_v > 0 and sn.iepe_bias_max_v + swing_v > d.limits.iepe_compliance_v:
+        raise ConfigError(f"{where}: the {sn.name} output reaches {sn.iepe_bias_max_v:g} V "
+                          f"bias + {swing_v:.2f} V at {sn.range_pk:g} {sn.unit}, above the "
+                          f"{d.model} IEPE compliance voltage {d.limits.iepe_compliance_v:g} V")
+
+
+def _channel_key(physical: str) -> str:
+    return physical.strip().lower()
+
+
+def validate_channels(cfg: Settings, where: str = "settings") -> None:
+    """Checks of the channel set: distinct names and physical channels, the device's channel
+    count, and per recorded channel its sensor, IEPE current, coupling and range."""
+    d = cfg.daq
+    lim = d.limits
+    chans = cfg.channels
+    names = [c.name for c in chans]
+    if len(set(names)) != len(names):
+        raise ConfigError(f"{where}: channel names must be distinct, got {names}")
+    phys = [_channel_key(c.physical) for c in chans]
+    if len(set(phys)) != len(phys):
+        raise ConfigError(f"{where}: each physical AI channel may be used once, got "
+                          f"{[c.physical for c in chans]}")
+    if lim.ai_channels_max and len(chans) > lim.ai_channels_max:
+        raise ConfigError(f"{where}: {len(chans)} AI channels, but the {d.model} has "
+                          f"{lim.ai_channels_max}")
+    for c in cfg.extra_channels:
+        w = f"{where}: channel '{c.name}'"
+        if c.role not in CHANNEL_ROLES or c.role == "control":
+            raise ConfigError(f"{w}: role must be one of {_fmt(CHANNEL_ROLES[1:])}")
+        if c.role == "loopback":
+            continue
+        validate_sensor(c.sensor, w)
+        if c.mv_per_unit <= 0:
+            raise ConfigError(f"{w}: sensitivity must be > 0")
+        if c.role in ("force", "hammer") and c.sensor.unit != "N":
+            raise ConfigError(f"{w}: role {c.role} needs a force sensor (unit N)")
+        if c.iepe_current_ma > 0 and not _one_of(c.iepe_current_ma, lim.iepe_currents_ma):
+            raise ConfigError(f"{w}: iepe_current_ma must be 0 or one of "
+                              f"{_fmt(lim.iepe_currents_ma)} ({d.model})")
+        _check_iepe(c.sensor, c.iepe_current_ma, d, w, "iepe_current_ma")
+        if c.coupling.upper() not in lim.ai_couplings:
+            raise ConfigError(f"{w}: coupling must be one of {_fmt(lim.ai_couplings)} ({d.model})")
+        if c.iepe_current_ma > 0 and c.coupling.upper() != "AC":
+            raise ConfigError(f"{w}: coupling must be AC when IEPE excitation is on")
+        if not _one_of(c.range_v, lim.ai_ranges_v):
+            raise ConfigError(f"{w}: range_v must be \"auto\" or one of {_fmt(lim.ai_ranges_v)} "
+                              f"({d.model})")
+
+
+def auto_range_v(sn: SensorConfig, mv_per_unit: float, d: DaqConfig, overload_fraction: float
+                 ) -> float:
+    """Smallest AI range of the device that holds the sensor's full range below
+    ``overload_fraction`` of the range (the largest range if none does)."""
+    need = sn.range_pk * mv_per_unit / 1000 / overload_fraction
+    ranges = sorted(d.limits.ai_ranges_v)
+    fit = [r for r in ranges if r >= need]
+    return fit[0] if fit else ranges[-1]
+
+
+def load_sensor(name_or_path: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> SensorConfig:
+    path = resolve_config_path(name_or_path, "sensors", config_dir)
+    sn = build_dataclass(SensorConfig, read_toml(path), str(path))
+    validate_sensor(sn, str(path))
+    return sn
+
+
+def load_channels(name_or_path: str, settings: Settings,
+                  config_dir: Path = DEFAULT_CONFIG_DIR, sensor_given: bool = False) -> Settings:
+    """Apply a channels file (key or path, ``config/channels/<key>.toml``) to ``settings``.
+
+    A ``[[channel]]`` with role ``control`` replaces the control channel of the DAQ file and the
+    sensor (``--sensor``); without one the run has no control channel (``vcactl record``,
+    ``vcactl tap``). Every other entry is recorded alongside, in file order.
+    """
+    path = resolve_config_path(name_or_path, "channels", config_dir)
+    table = read_toml(path)
+    unknown = set(table) - {"name", "channel", "aux"}
+    if unknown:
+        raise ConfigError(f"{path}: unknown key(s) {sorted(unknown)}")
+    entries = table.get("channel", [])
+    if not isinstance(entries, list) or not entries:
+        raise ConfigError(f"{path}: needs at least one [[channel]]")
+    d = settings.daq
+    control = None
+    extras = []
+    for i, entry in enumerate(entries):
+        where = f"{path} [[channel]] {i + 1}"
+        ch = build_dataclass(ChannelConfig, entry, where)
+        if ch.role not in CHANNEL_ROLES:
+            raise ConfigError(f"{where}: role must be one of {_fmt(CHANNEL_ROLES)}")
+        if ch.role == "loopback":
+            extras.append(AiChannel(ch.name, ch.physical, "loopback", settings.sensor, 1000.0,
+                                    0.0, "DC", 0.0))
+            continue
+        if not ch.sensor:
+            raise ConfigError(f"{where}: sensor is required")
+        sn = load_sensor(ch.sensor, config_dir)
+        if ch.sensitivity < 0:
+            raise ConfigError(f"{where}: sensitivity must be >= 0")
+        if ch.sensitivity > 0:
+            key = "sensitivity_mv_per_n" if sn.unit == "N" else "sensitivity_mv_per_g"
+            sn = dataclasses.replace(sn, **{key: ch.sensitivity})
+        if ch.iepe_current_ma >= 0:
+            iepe = ch.iepe_current_ma
+        elif sn.is_iepe and d.limits.iepe_currents_ma:
+            iepe = d.iepe_current_ma or d.limits.iepe_currents_ma[0]
+        else:
+            iepe = 0.0
+        coupling = (ch.coupling or ("AC" if iepe > 0 else d.ai_coupling)).upper()
+        if ch.role == "control":
+            if control is not None:
+                raise ConfigError(f"{where}: only one channel may have role control")
+            if sensor_given:
+                raise ConfigError(f"{where}: the channels file sets the control sensor; leave "
+                                  "out --sensor")
+            if isinstance(ch.range_v, float) or ch.range_v != "auto":
+                raise ConfigError(f"{where}: the control channel's range is chosen per run "
+                                  "(daq.ai_range_v, --ai-range); leave range_v out")
+            control = (ch, sn, iepe, coupling)
+            continue
+        if isinstance(ch.range_v, str):
+            if ch.range_v != "auto":
+                raise ConfigError(f"{where}: range_v must be \"auto\" or a number")
+            rng = auto_range_v(sn, sn.mv_per_unit, d, settings.safety.ai_overload_fraction)
+        else:
+            rng = ch.range_v
+        extras.append(AiChannel(ch.name, ch.physical, ch.role, sn, sn.mv_per_unit, iepe,
+                                coupling, rng))
+    out = dataclasses.replace(settings, extra_channels=tuple(extras), has_control=control is not None,
+                              channels_name=str(table.get("name", path.stem)))
+    if control is not None:
+        ch, sn, iepe, coupling = control
+        daq = dataclasses.replace(d, ai_channel=ch.physical, iepe_current_ma=iepe,
+                                  ai_coupling=coupling)
+        out = dataclasses.replace(out, daq=daq, sensor=sn, control_name=ch.name)
+    if "aux" in table:
+        out = dataclasses.replace(out, aux=_load_aux(table["aux"], out, f"{path} [aux]",
+                                                     config_dir))
+    validate_settings(out, str(path))
+    return out
+
+
+def _load_aux(table: dict, settings: Settings, where: str, config_dir: Path) -> AuxConfig:
+    """``[aux]``: daq (key or path), rate_hz, trigger_out, trigger_in, the DAQ settings to
+    override (device, ai_terminal_config) and ``[[aux.channel]]`` entries (roles load and
+    drive_ref)."""
+    if not isinstance(table, dict):
+        raise ConfigError(f"{where}: expected a table")
+    known = {"daq", "rate_hz", "trigger_out", "trigger_in", "channel", "device",
+             "ai_terminal_config"}
+    unknown = set(table) - known
+    if unknown:
+        raise ConfigError(f"{where}: unknown key(s) {sorted(unknown)}")
+    if "daq" not in table or "rate_hz" not in table:
+        raise ConfigError(f"{where}: daq and rate_hz are required")
+    daq_path = resolve_config_path(str(table["daq"]), "daq", config_dir)
+    daq_table = read_toml(daq_path)
+    for key in ("device", "ai_terminal_config"):
+        if key in table:
+            daq_table[key] = table[key]
+    daq = build_dataclass(DaqConfig, daq_table, f"{where} daq {daq_path}")
+    validate_daq(daq, f"{where} daq {daq_path}")
+    rate = table["rate_hz"]
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        raise ConfigError(f"{where}: rate_hz must be a number")
+    chans = []
+    for i, entry in enumerate(table.get("channel", [])):
+        w = f"{where} [[aux.channel]] {i + 1}"
+        ch = build_dataclass(ChannelConfig, entry, w)
+        if ch.role not in AUX_ROLES:
+            raise ConfigError(f"{w}: role must be one of {_fmt(AUX_ROLES)}")
+        if ch.role == "drive_ref":
+            # the AO drive, through a BNC tee at the amplifier input: volts
+            rng = ch.range_v if not isinstance(ch.range_v, str) else min(
+                (r for r in daq.limits.ai_ranges_v
+                 if r * settings.safety.ai_overload_fraction >= settings.daq.ao_range_v),
+                default=max(daq.limits.ai_ranges_v))
+            chans.append(AiChannel(ch.name, ch.physical, "drive_ref", settings.sensor, 1000.0,
+                                   0.0, "DC", float(rng)))
+            continue
+        if not ch.sensor:
+            raise ConfigError(f"{w}: sensor is required")
+        sn = load_sensor(ch.sensor, config_dir)
+        if ch.sensitivity > 0:
+            key = "sensitivity_mv_per_n" if sn.unit == "N" else "sensitivity_mv_per_g"
+            sn = dataclasses.replace(sn, **{key: ch.sensitivity})
+        rng = auto_range_v(sn, sn.mv_per_unit, daq, settings.safety.ai_overload_fraction) \
+            if isinstance(ch.range_v, str) else ch.range_v
+        chans.append(AiChannel(ch.name, ch.physical, "load", sn, sn.mv_per_unit,
+                               max(ch.iepe_current_ma, 0.0), (ch.coupling or "DC").upper(),
+                               float(rng)))
+    return AuxConfig(daq=daq, rate_hz=float(rate), channels=tuple(chans),
+                     trigger_out=str(table.get("trigger_out", "PFI4")),
+                     trigger_in=str(table.get("trigger_in", "PFI0")))
+
+
+def validate_aux(cfg: Settings, where: str = "settings") -> None:
+    """The aux DAQ's channels, rate and the control DAQ it starts with."""
+    aux = cfg.aux
+    if aux is None:
+        return
+    d, lim = aux.daq, aux.daq.limits
+    w = f"{where} [aux]"
+    if lim.driver != "nidaqmx" or cfg.daq.limits.driver != "nidaqmx":
+        raise ConfigError(f"{w}: an aux DAQ is supported with NI-DAQmx devices only")
+    if not cfg.daq.limits.antialias_filter:
+        raise ConfigError(f"{w}: the control DAQ must be a delta-sigma (DSA) device: the aux "
+                          "data are aligned to its AI samples at decimation 1")
+    refs = [c for c in aux.channels if c.role == "drive_ref"]
+    if len(refs) != 1:
+        raise ConfigError(f"{w}: needs exactly one channel with role drive_ref (the AO drive "
+                          "through a BNC tee), for the clock drift")
+    n = len(aux.channels)
+    if lim.ai_channels_max and n > lim.ai_channels_max:
+        raise ConfigError(f"{w}: {n} channels, but the {d.model} has {lim.ai_channels_max}")
+    if not lim.fs_min_hz <= aux.rate_hz <= lim.fs_max_hz:
+        raise ConfigError(f"{w}: rate_hz must be in [{lim.fs_min_hz:g}, {lim.fs_max_hz:g}] "
+                          f"({d.model})")
+    if lim.ai_aggregate_rate_hz and n * aux.rate_hz > lim.ai_aggregate_rate_hz:
+        raise ConfigError(f"{w}: {n} channels x {aux.rate_hz:g} S/s exceeds the {d.model} "
+                          f"aggregate rate {lim.ai_aggregate_rate_hz:g} S/s")
+    keys = [_channel_key(c.physical) for c in aux.channels]
+    if len(set(keys)) != len(keys) or len({c.name for c in aux.channels}) != n:
+        raise ConfigError(f"{w}: channel names and physical channels must be distinct")
+    main_names = {c.name for c in cfg.channels}
+    if main_names & {c.name for c in aux.channels}:
+        raise ConfigError(f"{w}: channel names must differ from the control DAQ's channels")
+    for c in aux.channels:
+        cw = f"{w} channel '{c.name}'"
+        if not _one_of(c.range_v, lim.ai_ranges_v):
+            raise ConfigError(f"{cw}: range_v must be one of {_fmt(lim.ai_ranges_v)} "
+                              f"({d.model})")
+        if c.coupling.upper() not in lim.ai_couplings:
+            raise ConfigError(f"{cw}: coupling must be one of {_fmt(lim.ai_couplings)}")
+        if c.iepe_current_ma > 0:
+            raise ConfigError(f"{cw}: no IEPE excitation on the aux DAQ")
+        if c.role == "load":
+            validate_sensor(c.sensor, cw)
 
 
 def validate_settings(cfg: Settings, where: str = "settings") -> None:
@@ -488,30 +846,27 @@ def validate_settings(cfg: Settings, where: str = "settings") -> None:
     if not frame_ok:
         raise ConfigError(f"{where}: control.frame_size must be \"auto\" or an even number "
                           ">= 256")
+    if c.periodic_deadband_db < 0:
+        raise ConfigError(f"{where}: control.periodic_deadband_db must be >= 0")
     if c.line_spacing_hz <= 0:
         raise ConfigError(f"{where}: control.line_spacing_hz must be > 0")
-    if not 0 < c.correction_gain <= 1:
-        raise ConfigError(f"{where}: control.correction_gain must be in (0, 1]")
+    if not 0 < c.correction_gain <= 1 or not 0 < c.periodic_correction_gain <= 1:
+        raise ConfigError(f"{where}: control.correction_gain and periodic_correction_gain must "
+                          "be in (0, 1]")
     if c.dof < 2 or c.control_dof < 2 or c.frf_averages < 1:
         raise ConfigError(f"{where}: control.dof/control_dof must be >= 2, frf_averages >= 1")
     if c.start_level_db > 0 or c.level_step_db <= 0:
         raise ConfigError(f"{where}: control.start_level_db must be <= 0 and level_step_db > 0")
     validate_sensor(cfg.sensor, where)
-    if d.iepe_current_ma > 0:
-        sn = cfg.sensor
-        if sn.iepe_max_ma <= 0:
-            raise ConfigError(f"{where}: daq.iepe_current_ma = {d.iepe_current_ma:g} mA, but "
-                              f"the {sn.name} is not an IEPE sensor")
-        if not sn.iepe_min_ma <= d.iepe_current_ma <= sn.iepe_max_ma:
-            raise ConfigError(f"{where}: daq.iepe_current_ma = {d.iepe_current_ma:g} mA is "
-                              f"outside the {sn.name} range {sn.iepe_min_ma:g}-"
-                              f"{sn.iepe_max_ma:g} mA")
-        swing_v = sn.range_g_pk * sn.sensitivity_mv_per_g / 1000
-        if sn.iepe_bias_max_v > 0 and sn.iepe_bias_max_v + swing_v > d.limits.iepe_compliance_v:
-            raise ConfigError(f"{where}: the {sn.name} output reaches {sn.iepe_bias_max_v:g} V "
-                              f"bias + {swing_v:.2f} V at {sn.range_g_pk:g} g, above the "
-                              f"{d.model} IEPE compliance voltage "
-                              f"{d.limits.iepe_compliance_v:g} V")
+    if cfg.sensor.unit != "g":
+        raise ConfigError(f"{where}: the control sensor must be an accelerometer (unit g), "
+                          f"not the {cfg.sensor.name} (unit {cfg.sensor.unit})")
+    if cfg.sensor.f_min_hz <= 0:
+        raise ConfigError(f"{where}: the control sensor needs its frequency range "
+                          "(sensor.f_min_hz, f_max_hz)")
+    _check_iepe(cfg.sensor, d.iepe_current_ma, d, where, "daq.iepe_current_ma")
+    validate_channels(cfg, where)
+    validate_aux(cfg, where)
     sc = cfg.sine
     if not 0 < sc.correction_gain <= 1:
         raise ConfigError(f"{where}: sine.correction_gain must be in (0, 1]")
@@ -519,6 +874,8 @@ def validate_settings(cfg: Settings, where: str = "settings") -> None:
             or sc.settled_blocks < 1:
         raise ConfigError(f"{where}: sine.max_step_db, max_correction_db and ramp_s must be > 0, "
                           "settled_blocks >= 1")
+    if s.force_limit_n < 0:
+        raise ConfigError(f"{where}: safety.force_limit_n must be >= 0 (0: off)")
     if s.ai_range_margin_db < 0:
         raise ConfigError(f"{where}: safety.ai_range_margin_db must be >= 0")
     if cfg.pretest.drive_rms_v <= 0:

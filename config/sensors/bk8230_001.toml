@@ -1,0 +1,19 @@
+# Brüel & Kjær Type 8230-001: DeltaTron (IEPE) force transducer, 22 mV/N.
+# Values from the HBK product data "DeltaTron Force Transducers Types 8230, 8230-001, 8230-002 and
+# 8230-003" (BP 2080), downloaded from bksv.com (2026-11-12); not yet in the Nextcloud folder.
+# Recorded channel (role "force" in a channels file); it cannot close the control loop.
+#
+# Not checked by the controller:
+# - Full scale output +/-5 V; residual noise 0.0031 N rms; linearity < +/-1 % full scale.
+# - Max. compression 4.5 kN (overload); mounted resonance 75 kHz (unloaded); stiffness 2.0 kN/um.
+# - Mass 30.2 g (9.5 g above, 20.7 g below the piezo element).
+# - 10-32 UNF connector; 1/4"-28 UNF thread top and bottom (10-32 adaptors for the stinger).
+# - The data sheet gives no frequency range (f_min_hz, f_max_hz left out).
+name = "B&K 8230-001"
+unit = "N"
+sensitivity_mv_per_n = 22.0        # typical; replace with the calibration chart value
+range_n_pk = 220.0                 # full scale, compression and tension
+mass_kg = 0.0302
+iepe_min_ma = 2.0                  # power supply 2-20 mA (18-30 V DC)
+iepe_max_ma = 20.0
+iepe_bias_max_v = 10.0             # DC output bias +8 to +10 V

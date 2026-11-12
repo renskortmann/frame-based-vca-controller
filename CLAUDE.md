@@ -46,6 +46,9 @@ Four files and a test profile combine into one run, each selected separately:
   an old alias): control tuning, pretest and the shaker-independent safety settings (payload,
   clipping, open-loop and overload aborts).
 - Test profile (`--profile`, `config/test_profiles/*.toml`, e.g. `low_g`).
+- Channels (`--channels`, `config/channels/*.toml`, optional): every AI channel of a run (see
+  "Cantilever beam test support" below). Without it the run reads only `daq.ai_channel` with
+  `--sensor`, exactly as before.
 
 Every option takes a key (`<config-dir>/<kind>/<key>.toml`, via `resolve_config_path`) or a path.
 `--shaker` and `--profile` are required on purpose: no silent default for the amplifier-dependent
@@ -278,6 +281,19 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
     in hours or rates.
   - The 4801/4812 + 2707 runs on 230 V single-phase mains at the lab (the 4801 manual lists
     380 V three-phase for the body; the user confirmed single-phase).
+- Cantilever damping tests for the researcher (2026-11): `cantilever_test_setup.md` is the
+  earlier working note; `cantilever_test_proposal.md` (2026-11-12) is the proposal to the
+  researcher, who decides the setup and tests, without lab notes (stripped 2026-11-12).
+  `cantilever_test_proposal_with_lab_notes.md` is the user's copy with the
+  `<div class="lab-note" ...>` boxes and the lab appendix (maths, glossary, the beam FE script
+  `beam.py`), for the user only. The two files are now separate: a change to the proposal must
+  be made in both (ask the user if unsure). The notes strip with
+  `sed '/<div class="lab-note"/,/^<\/div>/d'` (Lab note 1), so no line inside a note may start
+  with `</div>`. Write maths in Unicode/HTML, not LaTeX: Markdown PDF
+  doesn't render `$...$`. Page breaks come from `markdown-pdf-print.css` in that folder, loaded
+  through `markdown-pdf.styles` in the workspace file (relative to the exported file's workspace
+  folder). `purchase_list_cantilever_setup.docx` holds the purchase list and a comparison with
+  the equipment the tests need.
 
 ## Status
 
@@ -330,3 +346,74 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   the 4809 bare table resonates at 20 kHz). Over-reading against the 1-2 kHz level: 0.6 dB at
   3 kHz, 1.3 at 3.5, 2.4 at 4, 4.8 at 5 kHz, so the controller under-tests the table by that
   much. Keep profiles <= 3 kHz (at most 4 kHz) until the sensor is stud- or wax-mounted.
+
+### Cantilever beam test support (2026-11-12, simulator only)
+
+Built for the researcher's cantilever damping tests (`cantilever_test_proposal.md` in the
+Nextcloud folder; its section 6 lists the seven additions, all done). Everything runs in the
+simulator and against fake drivers (`tests/test_channels.py` has a fake nidaqmx); nothing is
+tested on hardware yet. User's choices: all seven in milestones; channel sets in a new
+`--channels` file per test.
+
+- **Channels (`config.py`).** `Settings.extra_channels` (`AiChannel`), `has_control`,
+  `control_name`, `aux`. The control channel stays in `daq.ai_channel` + `settings.sensor`
+  (`Settings.control_channel`); a channels file's `role = "control"` entry rewrites those, and
+  `--sensor` given as well is an error (`load_channels(..., sensor_given=)`; `--sensor` now
+  defaults to None, meaning pcb352b). `Settings.channels` = control first, then extras.
+  `SensorConfig` has `unit` g or N (`sensitivity_mv_per_n`, `range_n_pk`); f_min/f_max may be 0
+  for recorded-only sensors (the B&K data sheets give none), not for the control sensor.
+  `limits.ai_channels_max` (all six DAQ files, from the spec sheets) and
+  `limits.ai_aggregate_rate_hz` (USB-6211 250 kS/s). Extra channels' `range_v = "auto"`: the
+  smallest range for the sensor's full range (`auto_range_v`).
+- **Backends.** `read_channels(settings, loopback_channel)` (daq/base.py) is the column order;
+  `read` returns (n,) for one channel, else (n, k). `start(None, range)` = input only (no AO
+  task; NiDaq, UlDaq, sim). `_settle_iepe` settles every IEPE channel (normalised per range).
+  `SimulatedDaq` columns by role: response = `RESPONSE_FRACTION` (2 %) of the table
+  acceleration, force = `safety.payload_kg` x a x g, hammer = noise (or `TapSim` pulses).
+- **Controller.** `_io` decimates the extra columns with a second (2-D) `Decimator` (same
+  taps, same delay), keeps them in `extra_hist`, records them in raw.f32 and the ring-down CSVs.
+  `StepResult.ai_peaks_v` (all channels) goes to `RuntimeMonitor.check_io`, which takes a scalar
+  or an array; `safety.check_channel` checks overload, sensor range and `safety.force_limit_n`.
+  `ControllerBase.response_lag` = P x half + delay (in meta `raw.response_lag_samples`).
+- **record / tap.** `record.py` (`InputStream`, `run_record`), `tap.py` (`TapTest`, tap
+  profiles `type = "tap"`, rejected by `load_profile`). Both at the lowest auto rate,
+  decimation 1. An overloaded tap rejects the hit instead of aborting. `--confirm` asks in a
+  thread while the stream keeps being read.
+- **Periodic random (`drive = "periodic"`).** Ramp with random drive; at RUN the controller
+  switches to `PeriodicDriveGenerator` (crossfade with the random generator's tail). Corrections
+  once per period from `resp_period` (linear average over the period, dof 2 x frames) with
+  `periodic_correction_gain` 0.5 and `periodic_deadband_db` 1.0; `_drive_psd` is recomputed only
+  when a correction applies (recomputing every block from the ever-updating FRF changed every
+  period). events.csv: `period_start` (raw_sample, change_db) and `rampdown`.
+- **Aux DAQ (`[aux]` in a channels file, daq/aux.py, analysis/sync.py).** USB-6211 AI task
+  exports its start trigger (PFI 4) to the USB-4431's AI start trigger (PFI 0); the 4431 AI is
+  armed first, then the 6211 starts. ao.f32 (AO samples incl. prefill) + aux.f32 via
+  `backend.sink` (= `RunLogger.raw_block`). Input-only runs with aux play 10 mV chirp markers
+  every 2 s (`MARKER_EVERY_S`). Alignment: AO index n = a + rate x tau (aux time); coarse
+  offset from the first 1.5 s only (drift smears longer spans; repeated markers alias), then a
+  tracking pass and a fixed-line pass with +/-64-sample windows. Rows of aux_aligned.f32 = AI
+  samples (AO index + `filter_delay_at`, the controller's own model), so they match raw.f32 at
+  decimation 1; DSA control DAQ required. Sim: 120 ppm recovered within 0.01 ppm; linear
+  interpolation of 3 kHz content at 25.6 kS/s leaves about 3 % error (fine for load cells).
+- **Analysis (`vcactl.analysis`, tools/frf_damping.py, tools/notch_profile.py).** Welch and
+  period-synchronous H1; one-mode rational-fraction fit (Sanathanan-Koerner) with standard
+  errors; ring-down fit between 0.8 and 0.05 of the envelope (the span must start after the
+  peak and stop at the first fall below the low limit, or filter/Hilbert edge effects bias
+  zeta); `damper_energy` (c_eq); notches greedy 1 dB steps, >= 3 control lines.
+- **Sensor files.** `bk8230_001`, `bk8230`, `bk8206` from HBK product data BP 2080 / BP 2078,
+  downloaded from bksv.com, not yet in the Nextcloud folder. The 8230 is +/-45 N (not 44).
+  The clamp accelerometer has no file yet (`cantilever_driven` has the clamp channel commented
+  out). Load cells: `k3d40_50n` (ME K3D40 50N, 1 mV/V, data sheet in the Nextcloud
+  `loadcells/`), used in `cantilever_magnets` and `cantilever_friction` (2 x 3 axes + drive_ref
+  on the USB-6211 = 7 channels at 25.6 kS/s). Its 100 mV/N assumes a bridge amplifier set to 5 V
+  at 50 N (not chosen yet); the axis names lc1_x ... depend on the mounting.
+- **Still to do or check on hardware.** A 4-channel NiDaq run (channel order, per-channel IEPE);
+  the 8230 at 2.1 mA; the PFI 4 -> PFI 0 trigger and `ai_conv_rate` on the USB-6211; the bridge
+  amplifier (model, filter below fs/2); beam profiles (sine breakpoints, `ringdown_s` > 5 s);
+  the Q2 start marker (Ommatidia question 3); the antiresonance/force behaviour on the setup.
+- **Physics notes kept for the analysis.** Force measured at the beam: tip/force is the free
+  beam's FRF (no shaker damping); a coupled model (beam FE + 40 N/um stinger + 60 g armature)
+  gives < 5 % force variation across mode 1 while the drive-point acceleration drops ~1000x at
+  the held mode. Not finer control lines: 0.05 Hz at 51.2 kS/s is a 2^20 frame, > 5 min per
+  correction, safety checks every 10 s. The P-2000 shorts the coil in ring-down: c = (Bl)^2/R ~
+  20 N s/m, about 0.02/0.09/0.17 % on free modes 1-3 (`energy` measures it).

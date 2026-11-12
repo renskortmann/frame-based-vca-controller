@@ -27,7 +27,7 @@ import numpy as np
 from scipy import signal
 
 from ..config import Settings
-from .base import DaqFault, channel_number
+from .base import DaqFault, channel_number, read_channels
 
 MARKER_S = 0.04                 # chirp marker at the start of every run
 MARKER_V = 0.01                 # marker peak (V)
@@ -77,8 +77,10 @@ def find_marker(x: np.ndarray, marker: np.ndarray) -> int | None:
 
 
 class UlDaq:
-    """``loopback_channel``: a second AI channel (``vcactl loopback``), with IEPE off and DC
-    coupling; ``read`` then returns two columns (control, loopback)."""
+    """Reads ``read_channels(settings, loopback_channel)``: the control channel, the recorded
+    channels of a channels file (each with its own IEPE, coupling and range) and, for ``vcactl
+    loopback``, the loopback channel (IEPE off, DC); ``read`` returns (n,) for one channel, else
+    (n, channels) in that order."""
 
     def __init__(self, settings: Settings, block_io: int, loopback_channel: str | None = None):
         import uldaq  # noqa: F401  (import errors surface here, not at module import)
@@ -88,10 +90,11 @@ class UlDaq:
         self.fs_io = settings.daq.fs_io_hz
         self.block_io = block_io
         self.lead = settings.daq.limits.ao_lead_samples(self.fs_io)
-        self.loopback_channel = loopback_channel
+        self.channels = read_channels(settings, loopback_channel)
         self.device = self.ai = self.ao = self.daqi = None
         self.ai_range_v = None
         self.measured_lag = None
+        self.ai_only = False
         self._lock = threading.Lock()
         self._halt = threading.Event()
         self._thread = None
@@ -202,7 +205,9 @@ class UlDaq:
             self.measured_lag = self._ao_count() - (self._ai_count() + marker_at - j)
 
     # ------------------------------------------------------------------ backend interface
-    def start(self, prefill: np.ndarray, ai_range_v: float) -> None:
+    def start(self, prefill: np.ndarray | None, ai_range_v: float) -> None:
+        """``prefill`` None: input only (AI scan without AO, marker or watchdog; the AO is held
+        at 0 V and ``write`` raises DaqFault)."""
         import uldaq
 
         d = self.cfg
@@ -210,26 +215,40 @@ class UlDaq:
         self.ai_range_v = ai_range_v
         try:
             self._call(self._open)
-            ai_range = {1.0: uldaq.Range.BIP1VOLTS, 10.0: uldaq.Range.BIP10VOLTS}[float(ai_range_v)]
-            names = [d.ai_channel] + ([self.loopback_channel] if self.loopback_channel else [])
-            order = sorted(range(len(names)), key=lambda i: channel_number(names[i]))
+            ranges = {1.0: uldaq.Range.BIP1VOLTS, 10.0: uldaq.Range.BIP10VOLTS}
+            order = sorted(self.channels, key=lambda c: channel_number(c.physical))
             config = self.ai.get_config()
             descriptors = []
-            for i in order:                       # UL needs ascending channel order
-                ch = channel_number(names[i])
-                control = i == 0
-                iepe = control and d.iepe_current_ma > 0
-                ac = control and d.ai_coupling.upper() == "AC"
+            for c in order:                       # UL needs ascending channel order
+                ch = channel_number(c.physical)
+                iepe = c.iepe_current_ma > 0
+                ac = c.coupling.upper() == "AC"
                 self._call(config.set_chan_iepe_mode, ch,
                            uldaq.IepeMode.ENABLED if iepe else uldaq.IepeMode.DISABLED)
                 self._call(config.set_chan_coupling_mode, ch,
                            uldaq.CouplingMode.AC if ac else uldaq.CouplingMode.DC)
+                rng = ranges[float(c.range_v or ai_range_v)]
                 descriptors.append(uldaq.DaqInChanDescriptor(ch, uldaq.DaqInChanType.ANALOG_SE,
-                                                             ai_range))
+                                                             rng))
             descriptors.append(uldaq.DaqInChanDescriptor(0, uldaq.DaqInChanType.DAC,
                                                          uldaq.Range.BIP10VOLTS))
             self.n_in = len(descriptors)
-            self.columns = [order.index(i) for i in range(len(names))]
+            self.columns = [order.index(c) for c in self.channels]
+
+            if prefill is None:
+                self.ai_only = True
+                self.ai_len = round(AI_BUFFER_S * fs)
+                self._ai_buf = uldaq.create_float_buffer(self.n_in, self.ai_len)
+                self._ai_np = np.ctypeslib.as_array(self._ai_buf)
+                self._halt_ao()
+                ai_rate = self._call(self.daqi.daq_in_scan, descriptors, self.ai_len, fs,
+                                     uldaq.ScanOption.CONTINUOUS, uldaq.DaqInScanFlag.DEFAULT,
+                                     self._ai_buf)
+                if abs(ai_rate - fs) > 1e-3 * fs:
+                    raise DaqFault(f"{d.model}: AI runs at {ai_rate:g} S/s for {fs:g} S/s; "
+                                   "choose another fs_io_hz")
+                self.ai_read = 0
+                return
 
             # AO buffer: zeros, marker, zeros, the controller's prefill, room for the queue
             marker = chirp_marker(fs)
@@ -272,6 +291,8 @@ class UlDaq:
             raise
 
     def write(self, data: np.ndarray) -> None:
+        if self.ai_only:
+            raise DaqFault("write without an AO scan (input-only start)")
         self._check_fault()
         data = np.asarray(data, dtype=float)
         with self._lock:
@@ -287,7 +308,7 @@ class UlDaq:
             self._last_write = time.monotonic()
 
     def read(self, n: int) -> np.ndarray:
-        """``n`` AI samples (V): shape (n,), or (n, 2) with a loopback channel."""
+        """``n`` AI samples (V): shape (n,) for one channel, else (n, channels)."""
         need = self.ai_read + n
         t_end = time.monotonic() + READ_TIMEOUT_S
         while True:

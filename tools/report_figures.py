@@ -216,7 +216,7 @@ def fig_frf(run: Path, out: Path, band_hi: float = 3000.0) -> None:
 def three_cycles(run: Path, f_target: float):
     meta = json.loads((run / "meta.json").read_text())
     fs = meta["raw"]["fs_hz"]
-    raw = np.fromfile(run / "raw.f32", dtype=np.float32).reshape(-1, 2)
+    raw = np.fromfile(run / "raw.f32", dtype=np.float32).reshape(-1, len(meta["raw"]["columns"]))
     s = sweep_rows(run)
     k = int(np.argmin(np.abs(s["f_hz"] - f_target)))
     # the status row covers the frame ending at t_s; take three cycles in its middle
@@ -364,7 +364,7 @@ def fig_stepped_time(run: Path, out: Path) -> None:
     for ax in (ax_a, ax_f):
         ax.axvspan(t0, t1, color=GRID, lw=0)
     fs = meta["raw"]["fs_hz"]
-    raw = np.fromfile(run / "raw.f32", dtype=np.float32).reshape(-1, 2)
+    raw = np.fromfile(run / "raw.f32", dtype=np.float32).reshape(-1, len(meta["raw"]["columns"]))
     i0, i1 = round(t0 * fs), round(t1 * fs)
     pad = round(FILTER_PAD_S * fs)
     resp = bandpass(raw[i0 - pad:i1 + pad, 1], fs)[pad:-pad]

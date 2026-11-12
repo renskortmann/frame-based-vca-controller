@@ -77,9 +77,10 @@ specimen-specific profile):
 |---|---|---|---|
 | `--shaker` | `config/shakers/` | required | `tv51110`, `tv52110`, `bk4809`, `bk4801_4812` |
 | `--daq` | `config/daq/` | `usb6211` | `usb6211`, `usb4431`, `pxie4468`, `cdaq9234_9260`, `cdaq9232_9263`, `dt9837a` |
-| `--sensor` | `config/sensors/` | `pcb352b` | `pcb352b`, `pcb356b18` |
+| `--sensor` | `config/sensors/` | `pcb352b` | `pcb352b`, `pcb356b18` (control); `bk8230_001`, `bk8230`, `bk8206`, `k3d40_50n` (force, recorded only) |
+| `--channels` | `config/channels/` | none | `cantilever_driven`, `cantilever_magnets`, `cantilever_friction`, `cantilever_tap_shaker`, `cantilever_tap_beam` |
 | `--settings` | `config/settings/` | `default` | `default` |
-| `--profile` | `config/test_profiles/` | required | `low_g`, `low_g_10k`, `flat`, `sloped`, `wideband`, `sine_sweep`, `stepped_sine`, `ringdown` |
+| `--profile` | `config/test_profiles/` | required | `low_g`, `low_g_10k`, `flat`, `sloped`, `wideband`, `sine_sweep`, `stepped_sine`, `ringdown`, `cantilever_random_periodic`, `tap_beam` (vcactl tap) |
 
 `--shaker` and `--profile` have no default on purpose: the shaker file sets the
 amplifier-dependent drive limits, and the profile is the test itself, so neither should be
@@ -92,7 +93,8 @@ Cross-file rules:
 
 - `--daq` selects a DAQ profile; `[daq]` in `--settings` may override DAQ settings (for example
   `device`), but not `model` or `[limits]`.
-- The control sensor is selected only with `--sensor`; `[sensor]` in the settings file is rejected.
+- The control sensor is selected only with `--sensor` (or by the control channel of a
+  channels file; not both); `[sensor]` in the settings file is rejected.
 - `shaker.max_drive_v` must be within `daq.ao_range_v`.
 - `pretest.drive_rms_v` must be within `shaker.max_drive_rms_v`.
 - If IEPE is enabled (`daq.iepe_current_ma > 0`), `ai_coupling` must be AC and the current must
@@ -309,6 +311,96 @@ A more sensitive accelerometer may later replace the 352B as the default. The hi
 example profiles (`flat`, `sloped`, `wideband`) fail the range check of both ±5 g sensors; they
 need a less sensitive, higher-range accelerometer, which will get its own file.
 
+**Force sensors** (`unit = "N"`, `sensitivity_mv_per_n`, `range_n_pk`): recorded channels only
+(a channels file), never the control sensor. The frequency range may be left out (the data
+sheets give none). From the HBK product data (BP 2080, BP 2078), typical sensitivities: replace
+them with the calibration chart values.
+
+- `bk8230_001`: B&K 8230-001 force transducer, 22 mV/N, ±220 N, bias +8 to +10 V, 30.2 g.
+- `bk8230`: B&K 8230, 110 mV/N, ±45 N (reaches the Q2 lidar's ±2 V input at 18 N).
+- `bk8206`: B&K 8206 impact hammer, 22.7 mV/N, 220 N full scale, bias 10 ± 1 V.
+- `k3d40_50n`: ME-Meßsysteme K3D40 50N 3-axis strain-gauge load cell (data sheet
+  `loadcells/K3D40_50N_datasheet.pdf`), 50 N per axis, 1 mV/V. Its sensitivity at the DAQ
+  depends on the bridge amplifier: the file assumes 5 V at 50 N (100 mV/N); otherwise give each
+  axis's sensitivity in the channels file. For the USB-6211 (aux DAQ).
+
+### Channels (`--channels`)
+
+Without `--channels` a run reads one AI channel: `daq.ai_channel` with `--sensor`. A channels
+file (`config/channels/*.toml`) lists every AI channel of a run; all of them are recorded and
+checked, and one of them (role `control`) may close the loop:
+
+```toml
+name = "cantilever driven"
+
+[[channel]]                      # the control channel: replaces daq.ai_channel and --sensor
+name = "drive_point"
+physical = "ai0"
+sensor = "pcb352b"
+role = "control"
+
+[[channel]]
+name = "force"
+physical = "ai1"
+sensor = "bk8230_001"
+role = "force"                   # control | response | force | hammer | loopback
+# sensitivity = 22.4             # calibrated mV per sensor unit (default: the sensor file)
+# iepe_current_ma = -1           # -1: the DAQ's current for an IEPE sensor; 0: off
+# coupling = ""                  # "": AC with IEPE, else daq.ai_coupling
+# range_v = "auto"               # "auto": the smallest range for the sensor's full range
+```
+
+- `vcactl run`/`pretest`/`check` need a control channel; `vcactl record` and `vcactl tap` read
+  every channel without control (a tap test needs one `hammer` channel).
+- Each channel is validated against the DAQ's `[limits]`: at most `limits.ai_channels_max`
+  channels (USB-4431 4, PXIe-4468 2, USB-6211 8 differential, DT9837A 4, NI 9234 4, NI 9232 3),
+  its IEPE current within the sensor's range and the sensor's bias + full-range swing below
+  the IEPE compliance voltage, AC coupling with IEPE, a range of the device.
+- In a run, every channel is checked per block for AI overload and its sensor's range; a
+  `force` channel also against `safety.force_limit_n` (0: off). The recorded channels are
+  decimated with the control channel's filter (same delay) and saved in `raw.f32`
+  (`--record`) and the ring-down CSVs, in their units.
+- `cantilever_driven`: drive-point 352B (control), force 8230-001, base 356B18 (one axis); the
+  clamp accelerometer is commented out until it is chosen. `cantilever_magnets` and
+  `cantilever_friction`: the same plus two K3D40 load cells (`lc1_x` ... `lc2_z`) and the
+  drive reference on a USB-6211 (`[aux]`, 7 channels at 25.6 kS/s). `cantilever_tap_shaker`: hammer +
+  the 356B18's three axes; `cantilever_tap_beam`: hammer, drive-point 352B, base.
+
+**Aux DAQ** (`[aux]`): a second, AI-only device that records alongside (the treatment load
+cells on a USB-6211). The two clocks cannot be shared (the USB-4431 imports only a start
+trigger), so:
+
+```toml
+[aux]
+daq = "usb6211"
+device = "Dev2"
+rate_hz = 25600.0                # x channels <= limits.ai_aggregate_rate_hz (250 kS/s)
+trigger_out = "PFI4"             # USB-6211 PFI 4: its AI start trigger, wired to ...
+trigger_in = "PFI0"              # ... USB-4431 PFI 0: its AI task starts on that edge
+
+[[aux.channel]]                  # the AO drive, through a BNC tee at the amplifier input
+name = "drive_ref"
+physical = "ai0"
+role = "drive_ref"
+
+[[aux.channel]]                  # a load-cell axis through the bridge amplifier (unit N)
+name = "normal"
+physical = "ai1"
+sensor = "<load cell file>"
+role = "load"
+```
+
+- The control DAQ must be a DSA device (decimation 1); the aux task starts after the control
+  DAQ's AI task is armed, and its start trigger starts both.
+- The run writes `ao.f32` (the AO samples, control-DAQ clock) and `aux.f32` (the aux channels,
+  aux clock). Without drive (`record`, `tap`) the AO plays 10 mV chirp markers every 2 s
+  instead: keep the amplifier off.
+- `python tools/frf_damping.py sync RUN` fits the offset and drift (the USB-4431 is ±100 ppm,
+  the USB-6211 ±50 ppm) from `drive_ref` and writes `aux_aligned.f32`, one row per control-DAQ
+  AI sample (the rows of `raw.f32` at decimation 1), with the multiplexer skew removed.
+- The bridge amplifier's low-pass filter is the anti-aliasing filter (the USB-6211 has none):
+  set it below half the aux rate. Untested on hardware.
+
 ### Wiring and power-up
 
 The control sensor is always an IEPE accelerometer, mounted on the shaker table or fixture next
@@ -405,6 +497,18 @@ Examples: `low_g.toml` (0.55 g rms, 20–3000 Hz; fits the PCB 352B and 356B18),
 `flat.toml`, `sloped.toml` and `wideband.toml` (higher levels, for a
 less sensitive sensor).
 
+**Periodic random** (`drive = "periodic"`, `period_s = 20.0`): the ramp runs with random
+drive as usual; at full level the drive switches (crossfade over half a frame) to one
+fixed-phase period of the smallest power of two of samples ≥ `period_s` (2^20 = 20.48 s at
+51.2 kS/s, lines 0.049 Hz apart), repeated exactly. The drive is corrected only at the start of
+a period, from the response averaged over the period before, with
+`control.periodic_correction_gain` (0.5), and only on lines more than
+`control.periodic_deadband_db` (1 dB) off; otherwise the period repeats unchanged. Every period
+start is logged in `events.csv` (`raw_sample`: its row in `raw.f32`, `change_db`: how much the
+drive changed), and the ramp-down as `rampdown`, so `tools/frf_damping.py frf` averages only
+the steady periods, without a window (no leakage). Example: `cantilever_random_periodic.toml`
+(a draft level: notch it first with `tools/notch_profile.py`).
+
 #### Sine sweep
 
 The reference amplitude of both sine types is a breakpoint table; each breakpoint gives one of
@@ -452,6 +556,24 @@ breakpoints = [{ f_hz = 120.0, accel_g = 0.5 }]
 Examples: `stepped_sine.toml` and `ringdown.toml`. `--level` shifts every level;
 `--duration` is ignored.
 
+#### Tap test (`vcactl tap`)
+
+```toml
+type = "tap"
+record_s = 4.0             # record per hit (df = 1 / record_s)
+pretrigger_s = 0.02
+trigger_n = 10.0           # hammer force that starts a record
+hits = 5                   # accepted hits averaged
+max_hits = 30
+double_hit_fraction = 0.1  # a second peak above this fraction of the first: rejected
+force_window_s = 0.02      # force window after the trigger
+exp_window_end = 0.05      # exponential window at the record end (1: none)
+f_max_hz = 5000.0          # tap_frf.csv up to this frequency
+```
+
+Example: `tap_beam.toml`. The exponential window adds damping 1 / (2π f τ_w) to a mode at f
+(τ_w in `meta.json`); `tools/frf_damping.py fit` subtracts it.
+
 ## Usage
 
 | Command | Purpose | Notes |
@@ -461,6 +583,8 @@ Examples: `stepped_sine.toml` and `ringdown.toml`. `--level` shifts every level;
 | `vcactl pretest ...` | Measure noise floor + FRF at low level, then stop. | Useful hardware sanity check before `run`. |
 | `vcactl run ...` | Run a random or sine closed-loop test. | `--duration` applies to random profiles only. |
 | `vcactl loopback ...` | Self-test of a DAQ: AO looped back into a spare AI input, amplifier disconnected. | Delay, clock drift and gain; no shaker or profile. |
+| `vcactl record ...` | Record every channel without drive (background: amplifier off and on). | `--seconds`; no shaker or profile. |
+| `vcactl tap ...` | Impact-hammer tap test: triggered records, H1 and coherence. | `--profile` (type tap), a channels file with a hammer. |
 
 Options of `check`, `pretest` and `run`
 (see [Configuration](#configuration) for the keys):
@@ -468,6 +592,8 @@ Options of `check`, `pretest` and `run`
 - Required: `--shaker`, `--profile`.
 - Defaults: `--daq usb6211`, `--sensor pcb352b`, `--settings default` (alias: `--station`),
   `--config-dir config/`. All five take a key or a path.
+- `--channels` adds a channels file: the control channel and the channels recorded alongside
+  it (see [Channels](#channels---channels)).
 - `--level` shifts the profile level in dB (default 0).
 - `--ai-range` sets the AI range in V (one of the DAQ's ranges) or `auto` (default:
   `daq.ai_range_v`, normally `auto`).
@@ -500,6 +626,27 @@ Disconnect the amplifier first; `--sim` runs it on the simulator.
 
 ```
 vcactl loopback --daq cdaq9234_9260 --loopback-channel ai1
+```
+
+`record` and `tap` read every channel of `--channels` (or the DAQ file's control channel) at the
+DAQ's lowest automatic rate (USB-4431: 51.2 kS/s), input only: the AO stays at 0 V (with an aux
+DAQ it plays chirp markers; keep the amplifier off). Every channel is checked for overload and
+its sensor's range. Options: `--daq`, `--channels`, `--sensor`, `--settings`, `--config-dir`,
+`--sim` (with `--shaker` for the simulator), `--log-dir`, `--yes`, `--seed`.
+
+- `record --seconds N` writes `raw.f32` (every channel, in its unit, at the I/O rate) and
+  `status.csv` (rms per channel and block). Ctrl-C stops early.
+- `tap --profile tap_beam` starts a record of `record_s` whenever the hammer force reaches
+  `trigger_n`, rejects hits with an overload or a double hit, accepts the others (`--confirm`:
+  asks y/n per hit while the stream keeps running) and averages H1 and the coherence of every
+  response over the accepted hits (`tap_frf.csv`). The simulator gives hammer pulses into three
+  modes (120, 450, 1300 Hz).
+
+```
+vcactl record --daq usb4431 --channels cantilever_driven --seconds 120
+vcactl tap    --daq usb4431 --channels cantilever_tap_beam --profile tap_beam --confirm
+vcactl run    --daq usb4431 --channels cantilever_driven --shaker bk4809 \
+              --profile cantilever_random_periodic --level -20 --record
 ```
 
 ```
@@ -672,13 +819,27 @@ error, drive amplitude, phase) and, for stepped sine:
 - `events.csv` and `ringdown_<step>.csv`: drive cuts and the recorded decays (see
   [Sine control](#sine-control)).
 
-With `--record`, `raw.f32` holds every sample as float32 pairs (drive in V, response in g) at
-the control rate; `meta.json` gives the rate under `raw`. Sample k is at `t = k / fs`, the same
-time base as `t_s` in `status.csv`:
+With `--record`, `raw.f32` holds every sample as float32 rows (drive in V, response in g, then
+the recorded channels of a channels file in their units) at the control rate; `meta.json`
+gives the rate, the column names, units and sensitivities under `raw`, and
+`response_lag_samples`, the rows between a drive sample and the response it causes. Sample k is
+at `t = k / fs`, the same time base as `t_s` in `status.csv`:
 
 ```python
-raw = np.fromfile("raw.f32", dtype=np.float32).reshape(-1, 2)   # columns: drive_v, response_g
+meta = json.load(open("meta.json"))["raw"]
+raw = np.fromfile("raw.f32", dtype=np.float32).reshape(-1, len(meta["columns"]))
 ```
+
+Other files:
+
+- Periodic random: `events.csv` with `period_start` (and `rampdown`) rows; `meta.json`
+  `periodic.period_samples`.
+- `vcactl record`: `raw.f32` (every channel at the I/O rate, no drive column), `status.csv`.
+- `vcactl tap`: `hits.f32` (the unwindowed record of every hit, float32, record × channels,
+  hit after hit; `meta.json["hits"]`), `hits.csv` (peak force, double hit, overload,
+  accepted), `tap_frf.csv` (per response: |H1|, phase, coherence; and the force spectrum).
+- With an aux DAQ: `ao.f32` (AO samples), `aux.f32` (aux channels, aux clock; `meta.json["aux"]`);
+  after `tools/frf_damping.py sync`, `aux_aligned.f32` and `sync.json`.
 
 ## Tools
 
@@ -694,6 +855,28 @@ open against closed loop (two sweeps recorded with `--record`, one with `--open-
 loopback delay per rate and the IEPE start-up. Each figure is drawn when its inputs are given;
 see the script's docstring. `tools/iepe_startup.py` records the IEPE start-up of the control
 accelerometer (AI only; the amplifier may stay on).
+
+`tools/frf_damping.py` analyses recordings (functions in `vcactl.analysis`):
+
+```
+python tools/frf_damping.py psd RUN                      # PSDs of a vcactl record run
+python tools/frf_damping.py frf RUN --ref force_N --resp response_g   # H1 per steady period
+python tools/frf_damping.py fit RUN/tap_frf.csv --band 25 30 --column drive_point
+python tools/frf_damping.py ringdown RUN/ringdown_L1F1.csv --band 25 45
+python tools/frf_damping.py energy RUN/ringdown_L1F1.csv --f 27  # damper at the drive point
+python tools/frf_damping.py sync RUN                     # aux DAQ: offset, drift, aligned
+python tools/frf_damping.py friction RUN --normal normal_N --tangential tangential_N
+```
+
+`fit` fits one mode (rational fraction, least squares, with standard errors; half-power as a
+cross-check) and subtracts the tap test's exponential-window damping. `ringdown` band-passes one
+mode (zero phase), fits ln of the Hilbert envelope and gives ζ along the decay (friction).
+`energy` integrates the drive-point force × velocity per cycle: the damping the shaker adds in
+ring-down, as an equivalent damper (N s/m).
+
+`tools/notch_profile.py` notches a random profile so that the cantilever tip stays within the
+lidar's ±15.5 mm/s (crest factor × predicted rms), from a measured transmissibility (tip mm/s per
+drive-point g); notches are at least three control lines wide.
 
 `tools/shaker_comparison.py` builds `shaker_comparison.pdf`, which compares the configured shakers
 (ratings, amplifier and drive limits, payload limits). The PDF is kept in the Nextcloud folder
@@ -725,6 +908,9 @@ Layout:
 - `dsp/`: resampling and spectra.
 - `safety.py`: pre-flight (random and sine) and runtime monitors.
 - `rates.py`: DAQ rate and frame size per run, and the band compatibility check.
-- `daq/nidaq.py` (NI-DAQmx), `daq/ul.py` (UL for Linux, DT9837A), `daq/sim.py`: backends.
-- `loopback.py`: the loopback self-test.
+- `daq/nidaq.py` (NI-DAQmx), `daq/ul.py` (UL for Linux, DT9837A), `daq/sim.py`: backends;
+  `daq/aux.py`: the aux DAQ (USB-6211 load cells) and its simulator.
+- `loopback.py`: the loopback self-test. `record.py`: input-only recording (`InputStream`).
+  `tap.py`: the tap test.
+- `analysis/`: spectra and FRFs, modal and ring-down fits, clock alignment, profile notches.
 - `profile.py`, `config.py`, `logger.py`, `cli.py`.

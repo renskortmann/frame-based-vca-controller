@@ -1,0 +1,28 @@
+# ME-Meßsysteme K3D40 50N: 3-axis strain-gauge force sensor (item 4647), one file per axis use:
+# the load cells of the magnetic-damping and friction-bar treatments, recorded on the USB-6211
+# through a bridge amplifier ([aux] in config/channels/cantilever_magnets.toml and
+# cantilever_friction.toml). Values from loadcells/K3D40_50N_datasheet.pdf in the Nextcloud
+# project folder (data sheet as of 12.11.2026).
+#
+# The sensitivity at the DAQ input depends on the bridge amplifier (not chosen yet):
+# - rated output 1 mV/V per axis at 50 N (exact value per axis in the test report);
+# - this file assumes the amplifier is set to 5 V at the rated 50 N (gain 1000 at 5 V
+#   excitation): 100 mV/N, so the USB-6211's +/-10 V range holds the 200 % operating force.
+#   Set otherwise, give each axis's sensitivity (mV/N at the DAQ input) in the channels file.
+# - the amplifier's low-pass filter is the anti-aliasing filter for the USB-6211: below half
+#   the aux rate.
+#
+# Not checked by the controller:
+# - Operating force 200 % FS (100 N), breaking force 600 %; torque and bending moment limit
+#   5 N m; rated displacement 0.15 mm.
+# - Natural frequency fx 2 kHz (unloaded): use it well below that; the data sheet gives no
+#   frequency range (f_min_hz, f_max_hz left out).
+# - Crosstalk < 3 % FS without, < 1 % with the compensation matrix "s" (calibration report);
+#   linearity 0.2 % FS, accuracy class 0.5, creep 0.05 % FS.
+# - Excitation 2.5-5 V rated (1-10 V operating), 350 ohm bridges, M3x0.5 threads, IP65.
+# - Wiring per axis (channel 1/2/3): +Us brown/pink/purple, -Us white/grey/black,
+#   +Ud green/blue/orange, -Ud yellow/red/transparent.
+name = "ME K3D40 50N"
+unit = "N"
+sensitivity_mv_per_n = 100.0       # bridge amplifier: 5 V at the rated 50 N (see above)
+range_n_pk = 50.0                  # rated force per axis

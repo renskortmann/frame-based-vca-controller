@@ -33,16 +33,23 @@ def total_delay_control_samples(taps: np.ndarray, factor: int) -> int:
 
 
 class Decimator:
+    """Streaming FIR decimation of a 1-D signal, or of a 2-D block (samples, channels) column by
+    column with the same filter (so every channel has the same delay)."""
+
     def __init__(self, taps: np.ndarray, factor: int):
         self.taps, self.factor = taps, factor
-        self.zi = np.zeros(len(taps) - 1)
+        self.zi = None
 
     def process(self, x: np.ndarray) -> np.ndarray:
         if len(x) % self.factor:
             raise ValueError("block length must be a multiple of the decimation factor")
         if self.factor == 1:
             return np.asarray(x, dtype=float).copy()
-        y, self.zi = signal.lfilter(self.taps, 1.0, x, zi=self.zi)
+        x = np.asarray(x, dtype=float)
+        shape = (len(self.taps) - 1,) + x.shape[1:]
+        if self.zi is None or self.zi.shape != shape:
+            self.zi = np.zeros(shape)
+        y, self.zi = signal.lfilter(self.taps, 1.0, x, axis=0, zi=self.zi)
         return y[:: self.factor]
 
 

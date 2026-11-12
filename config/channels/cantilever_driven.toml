@@ -1,0 +1,35 @@
+# Cantilever beam, driven tests (sine sweep, stepped sine, ring-down, random) on the USB-4431:
+# select with --channels cantilever_driven (cantilever_test_proposal.md, sections 2 and 6).
+#
+# Each [[channel]]: name (column in raw.f32 and the ring-down CSVs), physical (AI channel),
+# sensor (config/sensors key), role (control, response, force, hammer), and optionally
+# sensitivity (calibrated mV per sensor unit), iepe_current_ma (-1: the DAQ's current for IEPE
+# sensors), coupling ("": AC with IEPE) and range_v ("auto": smallest range for the sensor's full
+# range; the USB-4431 has only +/-10 V).
+name = "cantilever driven"
+
+[[channel]]                      # closes the loop: stud-mounted at the drive point
+name = "drive_point"
+physical = "ai0"
+sensor = "pcb352b"
+role = "control"
+
+[[channel]]                      # between stinger and beam; also to the Q2 analog input (tee + DC blocker)
+name = "force"
+physical = "ai1"
+sensor = "bk8230_001"
+role = "force"
+
+# Clamp accelerometer: not chosen yet (to purchase, about 1 V/g). Add its sensor file, then:
+# [[channel]]
+# name = "clamp"
+# physical = "ai2"
+# sensor = "<key>"
+# role = "response"
+
+[[channel]]                      # the axis along the shaker; set the calibrated sensitivity of
+name = "base"                    # the axis used (LW266119: x 980, y 1054, z 1048 mV/g)
+physical = "ai3"
+sensor = "pcb356b18"
+role = "response"
+sensitivity = 1048.0

@@ -1,0 +1,17 @@
+# Brüel & Kjær Type 8206: impact hammer with DeltaTron (IEPE) force sensor, 22.7 mV/N.
+# Values from the HBK product data "Impact Hammers Types 8206, 8206-001, 8206-002 and 8206-003"
+# (BP 2078), downloaded from bksv.com (2026-11-12); not yet in the Nextcloud folder.
+# Recorded channel (role "hammer" in a channels file, vcactl tap).
+#
+# Not checked by the controller:
+# - Full scale output +5 V; linearity < +/-1 % full scale; max. force 4448 N (compression).
+# - Effective seismic mass 100 g (head extender DB 3996: +40 g); BNC connector, cable included.
+# - The usable band depends on the tip (UA-2059: aluminium, plastic, rubber); the data sheet
+#   gives it only as a plot (f_min_hz, f_max_hz left out).
+name = "B&K 8206"
+unit = "N"
+sensitivity_mv_per_n = 22.7        # typical; replace with the calibration chart value
+range_n_pk = 220.0                 # full scale, compression
+iepe_min_ma = 2.0                  # power supply 2-20 mA (18-30 V DC)
+iepe_max_ma = 20.0
+iepe_bias_max_v = 11.0             # DC output bias 10 +/- 1 V

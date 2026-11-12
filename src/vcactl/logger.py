@@ -33,6 +33,7 @@ class RunLogger:
         self._status = csv.DictWriter(self._status_fh, fieldnames=self.fields)
         self._status.writeheader()
         self._raw_fh = None
+        self._blocks: dict = {}                 # raw_block files by name
         self._pending: list[tuple[Path, np.ndarray, str]] = []    # time series, written by close()
 
     def meta(self, data: dict) -> None:
@@ -68,17 +69,32 @@ class RunLogger:
         self._pending.append((path, data, ",".join(columns)))
         return path
 
-    def raw(self, drive: np.ndarray, response: np.ndarray) -> None:
-        """Append one half-frame to ``raw.f32``: float32 pairs (drive V, response g) at the
-        control rate; sample k is at t = k / fs, the time base of ``status.csv``."""
+    def raw(self, drive: np.ndarray, response: np.ndarray,
+            extra: np.ndarray | None = None) -> None:
+        """Append one half-frame to ``raw.f32``: float32 rows (drive V, response g, then the
+        recorded channels of a channels file in their units) at the control rate; sample k is at
+        t = k / fs, the time base of ``status.csv``. ``meta.json["raw"]["columns"]`` names the
+        columns."""
         if self._raw_fh is None:
             self._raw_fh = open(self.dir / "raw.f32", "ab")
-        np.column_stack([drive, response]).astype(np.float32).tofile(self._raw_fh)
+        cols = [drive, response] if extra is None else [drive, response, extra]
+        np.column_stack(cols).astype(np.float32).tofile(self._raw_fh)
+
+    def raw_block(self, data: np.ndarray, name: str = "raw.f32") -> None:
+        """Append rows (samples, columns) to ``name`` as float32 (``vcactl record``: raw.f32,
+        ``vcactl tap``: hits.f32)."""
+        fh = self._blocks.get(name)
+        if fh is None:
+            fh = self._blocks[name] = open(self.dir / name, "ab")
+        np.asarray(data).astype(np.float32).tofile(fh)
 
     def close(self) -> None:
         self._status_fh.close()
         if self._raw_fh is not None:
             self._raw_fh.close()
+        for fh in self._blocks.values():
+            fh.close()
+        self._blocks.clear()
         for path, data, header in self._pending:
             np.savetxt(path, data, delimiter=",", header=header, comments="", fmt="%.6e")
         self._pending.clear()

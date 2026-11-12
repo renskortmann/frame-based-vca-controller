@@ -1,0 +1,38 @@
+# Driven tests with the two load-cell axes of the friction tool on a USB-6211 (test data).
+name = "cantilever driven + load cells (test)"
+
+[[channel]]
+name = "drive_point"
+physical = "ai0"
+sensor = "pcb352b"
+role = "control"
+
+[[channel]]
+name = "force"
+physical = "ai1"
+sensor = "bk8230_001"
+role = "force"
+
+[aux]
+daq = "usb6211"
+device = "Dev2"
+rate_hz = 25600.0
+trigger_out = "PFI4"
+trigger_in = "PFI0"
+
+[[aux.channel]]
+name = "drive_ref"
+physical = "ai0"
+role = "drive_ref"
+
+[[aux.channel]]
+name = "normal"
+physical = "ai1"
+sensor = "tests/data/loadcell_test.toml"
+role = "load"
+
+[[aux.channel]]
+name = "tangential"
+physical = "ai2"
+sensor = "tests/data/loadcell_test.toml"
+role = "load"

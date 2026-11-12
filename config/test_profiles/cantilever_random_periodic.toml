@@ -1,0 +1,22 @@
+# Cantilever beam, random run with periodic random drive (cantilever_test_proposal.md, section 4):
+# flat at the drive point, 20 Hz (the P-2000's lower limit) to 4 kHz (held mode 7 at 4052 Hz,
+# the 352B on a stud). At full level the drive repeats a 20 s period (2^20 samples at 51.2 kS/s =
+# 20.48 s, df = 0.049 Hz) and is corrected once per period; events.csv logs each period start.
+#
+# DRAFT level: the tip velocity must stay within the Q2's +/-15.5 mm/s (peaks 3-4x rms) and the
+# beam amplifies the drive point 1310x at held mode 1. Make a notched profile from a low-level
+# run first (tools/notch_profile.py), and start at -20 dB or lower (--level).
+type = "random"
+name = "Cantilever random, periodic, 20-4000 Hz (draft)"
+duration_s = 600.0
+drive = "periodic"
+period_s = 20.0
+
+breakpoints = [
+    { f_hz = 20.0, psd_g2_hz = 1.0e-7 },
+    { f_hz = 4000.0, psd_g2_hz = 1.0e-7 },
+]
+
+[tolerance]
+alarm_db = 3.0
+abort_db = 6.0

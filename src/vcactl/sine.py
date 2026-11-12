@@ -160,7 +160,9 @@ class SineController(ControllerBase):
             m = self.resp_hist.count
             lo, hi = max(start, m - n), min(stop, m)
             if lo < hi:
-                buf[lo - start:hi - start] = self.resp_hist.get(lo, hi)
+                buf[lo - start:hi - start, 0] = self.resp_hist.get(lo, hi)
+                if self.extra_hist is not None:
+                    buf[lo - start:hi - start, 1:] = self.extra_hist.get(lo, hi)
         return sd
 
     def _generate(self, f1: float, ref1: float, amp1: float, cut: bool = False):
@@ -230,7 +232,7 @@ class SineController(ControllerBase):
         self.sine_on = True
         sd, cut_index = self._generate(f1, ref1, amp1, cut)
         est = self.est = self._estimate()
-        self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+        self.monitor.check_io(sd.ai_peaks_v, sd.drive_rms_v, sd.clip_fraction)
         if est is not None:
             self.monitor.check_response_peak(est.meas_pk_g)
             expected = est.ref_pk_g
@@ -258,7 +260,7 @@ class SineController(ControllerBase):
         """Zero drive (ring-down), with the I/O checks."""
         self._check_stop()
         sd = self._io(np.zeros(self.half))
-        self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+        self.monitor.check_io(sd.ai_peaks_v, sd.drive_rms_v, sd.clip_fraction)
         self.run_time_s += self.half / self.fs
         self._report(sd, None)
         return sd
@@ -308,7 +310,7 @@ class SineController(ControllerBase):
         for i in range(1, n + 1):
             self._check_stop()
             sd, _ = self._generate(self.f, r0 * (1 - i / n), a0 * (1 - i / n))
-            self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            self.monitor.check_io(sd.ai_peaks_v, sd.drive_rms_v, sd.clip_fraction)
             self.run_time_s += self.half / self.fs
             self._report(sd, None)
         self.sine_on = False
@@ -412,7 +414,7 @@ class SineController(ControllerBase):
         pre = min(round(RINGDOWN_PRE_S * self.fs), self.P * self.half + self.delay)
         # the cut drive sample is index c; the response sees it at c + delay
         start_guess = self.drive_hist.count + self.delay - pre
-        buf = np.full(pre + self.half + n_ring, np.nan)
+        buf = np.full((pre + self.half + n_ring, 1 + len(self.extras)), np.nan)
         self._capture = (start_guess, start_guess + len(buf), buf)
         _, _, cut = self._block(f, self._ref(f, level), cut=True)
         self.sine_on = False
@@ -429,7 +431,9 @@ class SineController(ControllerBase):
         a = cut + self.delay - pre - start_guess
         data = buf[a:a + pre + n_ring]
         t = (np.arange(len(data)) - pre) / self.fs
-        cols = {"t_s": t, "response_g": data}
+        cols = {"t_s": t, "response_g": data[:, 0]}
+        for i, ch in enumerate(self.extras):     # recorded channels (channels file)
+            cols[f"{ch.name}_{ch.unit}"] = data[:, 1 + i]
         if self.logger:
             self.logger.timeseries(f"ringdown_{self.step_label}", cols)
         self.last_ringdown = cols
@@ -446,7 +450,7 @@ class SineController(ControllerBase):
         a0, r0 = self.amp_v, self.ref_g
         for i in range(1, n + 1):
             sd, _ = self._generate(self.f, r0 * (1 - i / n), a0 * (1 - i / n))
-            self.monitor.check_io(sd.ai_peak_v, 0.0, 0.0)
+            self.monitor.check_io(sd.ai_peaks_v, 0.0, 0.0)
         self.sine_on = False
         for _ in range(self.P + 2):
             self._io(np.zeros(self.half))

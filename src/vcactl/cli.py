@@ -1,9 +1,10 @@
-"""Command-line interface: ``vcactl {list-devices,check,pretest,run,loopback}``."""
+"""Command-line interface: ``vcactl {list-devices,check,pretest,run,loopback,record,tap}``."""
 
 from __future__ import annotations
 
 import argparse
 import importlib
+import math
 import signal
 import sys
 import time
@@ -12,7 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from . import __version__
-from .config import (DEFAULT_CONFIG_DIR, ConfigError, load_shaker, load_settings,
+from .config import (DEFAULT_CONFIG_DIR, ConfigError, load_channels, load_shaker, load_settings,
                      resolve_config_path, validate_setup)
 from .controller import Controller, State
 from .daq.base import DaqFault, channel_number
@@ -32,13 +33,18 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--daq", default="usb6211",
                    help="DAQ device key (usb6211, usb4431, pxie4468, cdaq9234_9260, cdaq9232_9263, "
                         "dt9837a) or path to a DAQ TOML file (default usb6211)")
-    p.add_argument("--sensor", default="pcb352b",
+    p.add_argument("--sensor", default=None,
                    help="control accelerometer key (pcb352b, pcb356b18) or path to a sensor TOML "
-                        "file (default pcb352b)")
+                        "file (default pcb352b; not with a channels file that has a control "
+                        "channel)")
+    p.add_argument("--channels", default=None,
+                   help="channels key (cantilever_driven, ...) or path to a channels TOML file: "
+                        "the control channel and the channels recorded alongside it "
+                        "(default: the DAQ file's control channel only)")
     p.add_argument("--settings", "--station", dest="settings", default="default",
                    help="settings key (default) or path to a settings TOML file (default: default)")
     p.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR,
-                   help="directory containing shakers/, daq/, sensors/, settings/ and "
+                   help="directory containing shakers/, daq/, sensors/, channels/, settings/ and "
                         "test_profiles/ (*.toml); keys resolve there")
     p.add_argument("--level", type=float, default=0.0,
                    help="target level in dB relative to the profile (default 0)")
@@ -56,6 +62,12 @@ def _add_run_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--record", action="store_true",
                    help="also save the raw drive and response (raw.f32, about 0.4 MB/s at "
                         "51.2 kS/s)")
+    _add_sim_aux(p)
+
+
+def _add_sim_aux(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--sim-aux-ppm", type=float, default=0.0, help=argparse.SUPPRESS)
+    p.add_argument("--sim-aux-offset-ms", type=float, default=0.0, help=argparse.SUPPRESS)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -101,7 +113,39 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--shaker", default="tv51110", help="shaker for --sim (default tv51110)")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     p.add_argument("--seed", type=int, default=None, help="random seed")
+
+    p = sub.add_parser("record", help="record every channel without drive (background: "
+                                      "amplifier off and on)")
+    _add_input_opts(p)
+    p.add_argument("--seconds", type=float, default=60.0, help="recording length (default 60 s)")
+
+    p = sub.add_parser("tap", help="impact-hammer tap test: triggered records, H1 and coherence")
+    _add_input_opts(p)
+    p.add_argument("--profile", required=True,
+                   help="tap profile key (tap_beam) or path to a tap profile TOML file")
+    p.add_argument("--confirm", action="store_true",
+                   help="ask to accept each hit that passes the checks (default: accept)")
     return ap
+
+
+def _add_input_opts(p: argparse.ArgumentParser) -> None:
+    """Options of the input-only commands (record, tap)."""
+    p.add_argument("--daq", default="usb6211",
+                   help="DAQ device key or path to a DAQ TOML file (default usb6211)")
+    p.add_argument("--channels", default=None,
+                   help="channels key or path: the channels to record (default: the DAQ file's "
+                        "control channel with --sensor)")
+    p.add_argument("--sensor", default=None,
+                   help="sensor of the DAQ file's control channel (default pcb352b)")
+    p.add_argument("--settings", "--station", dest="settings", default="default",
+                   help="settings key or path (default: default)")
+    p.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR)
+    p.add_argument("--sim", action="store_true", help="use the simulated DAQ")
+    p.add_argument("--shaker", default="tv51110", help="shaker for --sim (default tv51110)")
+    p.add_argument("--log-dir", type=Path, default=Path("runs"), help="root directory for run logs")
+    p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    p.add_argument("--seed", type=int, default=None, help="random seed")
+    _add_sim_aux(p)
 
 
 def _print_status(row: dict, last: list) -> None:
@@ -127,11 +171,13 @@ def _print_status(row: dict, last: list) -> None:
     sys.stdout.flush()
 
 
-def _make_backend(args, settings, shaker, block_io, loopback_channel=None):
+def _make_backend(args, settings, shaker, block_io, loopback_channel=None, tap=None):
     if args.sim:
         from .daq.sim import SimulatedDaq
         return SimulatedDaq(settings, shaker, realtime=getattr(args, "sim_realtime", False),
-                            seed=args.seed, loopback_channel=loopback_channel)
+                            seed=args.seed, loopback_channel=loopback_channel, tap=tap,
+                            aux_ppm=getattr(args, "sim_aux_ppm", 0.0),
+                            aux_offset_s=getattr(args, "sim_aux_offset_ms", 0.0) / 1000)
     if settings.daq.limits.driver == "uldaq":
         from .daq.ul import UlDaq
         return UlDaq(settings, block_io, loopback_channel)
@@ -191,10 +237,170 @@ def cmd_loopback(args) -> int:
     return 0 if result.ok else 2
 
 
+def cmd_record(args) -> int:
+    from .record import record_settings, run_record
+
+    try:
+        settings = record_settings(load_run_settings(args))
+        shaker = load_shaker(args.shaker, args.config_dir) if args.sim else None
+        if args.seconds <= 0:
+            raise ConfigError("--seconds must be > 0")
+    except ConfigError as exc:
+        print(f"configuration error: {exc}", file=sys.stderr)
+        return 2
+    d = settings.daq
+    print(f"daq    : {d.model}, {d.fs_io_hz:g} S/s, {args.seconds:g} s, no drive"
+          + (" (AO: clock markers only; keep the amplifier OFF)" if settings.aux else
+             " (AO not used)"))
+    print(_channels_text(settings) or f"sensor : {_sensor_text(settings)}")
+    print(_aux_text(settings), end="")
+    if not args.sim and not args.yes:
+        if input("Type 'yes' to start: ").strip().lower() != "yes":
+            print("cancelled")
+            return 1
+    from .record import InputStream, block_samples
+    names = InputStream(settings, None, 1).names
+    logger = RunLogger(args.log_dir, "record" + ("_sim" if args.sim else ""),
+                       ["t_s"] + [f"{n}_rms" for n in names])
+    backend = _make_backend(args, settings, shaker, block_samples(settings))
+    meta = {"version": __version__, "command": "record", "settings": settings,
+            "seconds": args.seconds, "sim": args.sim,
+            "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "raw": {**raw_meta(settings, d.fs_io_hz, drive=False), "columns": names}}
+    _attach_aux(settings, backend, logger, meta)
+    logger.meta(meta)
+    stop = [False]
+
+    def request_stop(signum, frame):
+        stop[0] = True
+
+    old_int = signal.signal(signal.SIGINT, request_stop)
+    try:
+        result = run_record(settings, backend, logger, args.seconds, lambda: stop[0],
+                            lambda t: (sys.stdout.write(f"\rrecording {t:6.1f} s"),
+                                       sys.stdout.flush()))
+    except DaqFault as exc:
+        print(f"\nDAQ fault: {exc}")
+        return 1
+    finally:
+        signal.signal(signal.SIGINT, old_int)
+        logger.close()
+    print()
+    settle_s = getattr(backend, "settle_s", None)
+    if settle_s:
+        meta["iepe_settle_s"] = round(settle_s, 2)
+    meta["recorded_s"] = result.seconds
+    _finish_aux(settings, backend, meta)
+    logger.meta(meta)
+    print(result.format())
+    print(f"result : {result.reason}\nlogs   : {logger.dir}")
+    return 0 if result.completed else 1
+
+
+def cmd_tap(args) -> int:
+    from .daq.sim import TapSim
+    from .record import block_samples, record_settings
+    from .tap import TapTest, load_tap_profile
+
+    try:
+        settings = record_settings(load_run_settings(args))
+        profile = load_tap_profile(resolve_config_path(args.profile, "test_profiles",
+                                                       args.config_dir))
+        shaker = load_shaker(args.shaker, args.config_dir) if args.sim else None
+        tap_sim = TapSim(interval_s=profile.record_s + 0.5) if args.sim else None
+        backend = _make_backend(args, settings, shaker, block_samples(settings), tap=tap_sim)
+
+        def ask(hit):
+            answer = input(f"\nhit {hit.index}: {hit.peak_n:.1f} N, accept? [Y/n] ")
+            return answer.strip().lower() not in ("n", "no")
+
+        logger = None
+        tap = TapTest(settings, backend, profile, confirm=ask if args.confirm else None,
+                      confirm_async=args.confirm,
+                      on_hit=lambda h: print(f"hit {h.index:3d}: {h.peak_n:7.1f} N "
+                                             + ("accepted" if h.accepted else "rejected")
+                                             + (" (double hit)" if h.double_hit else "")
+                                             + (f" (overload: {', '.join(h.overload)})"
+                                                if h.overload else "")))
+    except ConfigError as exc:
+        print(f"configuration error: {exc}", file=sys.stderr)
+        return 2
+    d = settings.daq
+    print(f"daq    : {d.model}, {d.fs_io_hz:g} S/s, no drive"
+          + (" (AO: clock markers only; keep the amplifier OFF)" if settings.aux else
+             " (AO not used)"))
+    print(_channels_text(settings) or f"sensor : {_sensor_text(settings)}")
+    print(_aux_text(settings), end="")
+    print(f"profile: {profile.name or Path(args.profile).stem}: {profile.hits} hits, "
+          f"{profile.record_s:g} s records, trigger {profile.trigger_n:g} N\n")
+    if not args.sim and not args.yes:
+        if input("Type 'yes' to start, then tap: ").strip().lower() != "yes":
+            print("cancelled")
+            return 1
+    logger = RunLogger(args.log_dir, "tap_" + Path(args.profile).stem
+                       + ("_sim" if args.sim else ""), ["t_s"])
+    tap.logger = logger
+    meta = {"version": __version__, "command": "tap", "settings": settings, "profile": profile,
+            "sim": args.sim, "tau_w_s": tap.tau_w if math.isfinite(tap.tau_w) else None,
+            "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "hits": {"file": "hits.f32", "dtype": "float32", "fs_hz": d.fs_io_hz,
+                     "record_samples": tap.n_rec, "pretrigger_samples": tap.n_pre,
+                     "columns": tap.stream.names}}
+    _attach_aux(settings, backend, logger, meta)
+    logger.meta(meta)
+    stop = [False]
+    old_int = signal.signal(signal.SIGINT, lambda signum, frame: stop.__setitem__(0, True))
+    try:
+        reason = tap.run(lambda: stop[0])
+    except DaqFault as exc:
+        print(f"DAQ fault: {exc}")
+        return 1
+    finally:
+        signal.signal(signal.SIGINT, old_int)
+        logger.close()
+    meta["accepted_hits"] = tap.accepted
+    meta["total_hits"] = len(tap.hits)
+    _finish_aux(settings, backend, meta)
+    logger.meta(meta)
+    print(f"result : {reason}\nlogs   : {logger.dir}")
+    return 0 if tap.accepted >= profile.hits else 1
+
+
 def _sensor_text(settings) -> str:
     sn = settings.sensor
     return (f"{sn.name} ({settings.v_per_g * 1000:g} mV/g at the DAQ input, "
             f"+/-{sn.range_g_pk:g} g, {sn.f_min_hz:g}-{sn.f_max_hz:g} Hz)")
+
+
+def _channels_text(settings) -> str:
+    """One line per AI channel (only when a channels file adds channels)."""
+    if not settings.extra_channels:
+        return ""
+    lines = [f"channels: {settings.channels_name}"]
+    for c in settings.channels:
+        rng = "per run" if c.range_v == 0 else f"+/-{c.range_v:g} V"
+        iepe = f"IEPE {c.iepe_current_ma:g} mA" if c.iepe_current_ma > 0 else "IEPE off"
+        what = "AO loopback" if c.role == "loopback" else \
+            f"{c.sensor.name}, {c.mv_per_unit:g} mV/{c.unit}"
+        lines.append(f"  {c.name:<12} {c.physical:<5} {c.role:<8} {what}; {c.coupling}, {iepe}, "
+                     f"range {rng}")
+    return "\n".join(lines) + "\n"
+
+
+def raw_meta(settings, fs_hz: float, file: str = "raw.f32", drive: bool = True) -> dict:
+    """``meta.json["raw"]``: the columns of a raw recording, their units and sensitivities."""
+    cols, units, sens = [], [], []
+    if drive:
+        cols, units, sens = ["drive_v"], ["V"], [None]
+    for c in settings.channels:
+        if c.role == "control":
+            cols.append("response_g")
+        else:
+            cols.append(f"{c.name}_{c.unit}")
+        units.append(c.unit)
+        sens.append(None if c.role == "loopback" else c.mv_per_unit)
+    return {"file": file, "dtype": "float32", "fs_hz": fs_hz, "columns": cols, "units": units,
+            "sensitivity_mv_per_unit": sens}
 
 
 def _profile_text(profile, level_db: float) -> str:
@@ -244,6 +450,7 @@ def cmd_check(args, settings, shaker, profile, rates) -> int:
     print(f"shaker : {shaker.name}\ndaq    : {settings.daq.model}, AI range {ai.format()}\n"
           f"rates  : {rates.format()}\n"
           f"sensor : {_sensor_text(settings)}\n"
+          f"{_channels_text(settings)}{_aux_text(settings)}"
           f"profile: {_profile_text(profile, args.level)}\n")
     print(report.format())
     print("\nPASS" if report.ok else "\nFAIL")
@@ -263,6 +470,7 @@ def cmd_run(args, settings, shaker, profile, rates, pretest_only: bool) -> int:
               f"{settings.daq.ao_device or settings.daq.device}/{settings.daq.ao_channel} "
               f"(max {shaker.max_drive_v:g} V).\n"
               f"Control sensor: {_sensor_text(settings)}.\n"
+              f"{_channels_text(settings)}"
               "Check the amplifier gain, the accelerometer mounting and the charge amplifier "
               "setting.")
         if input("Type 'yes' to start: ").strip().lower() != "yes":
@@ -291,9 +499,13 @@ def cmd_run(args, settings, shaker, profile, rates, pretest_only: bool) -> int:
             "profile": profile, "level_db": args.level, "ai_range": ai, "rates": rates,
             "sim": args.sim, "pretest_only": pretest_only, "open_loop_cal_hz": f_cal,
             "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    _attach_aux(settings, backend, logger, meta)
     if args.record:
-        meta["raw"] = {"file": "raw.f32", "dtype": "float32", "fs_hz": settings.fs_control_hz,
-                       "columns": ["drive_v", "response_g"]}
+        meta["raw"] = raw_meta(settings, settings.fs_control_hz)
+        meta["raw"]["response_lag_samples"] = ctl.response_lag
+    if getattr(ctl, "periodic", False):
+        meta["periodic"] = {"period_samples": ctl.period_n,
+                            "period_s": ctl.period_n / settings.fs_control_hz}
     logger.meta(meta)
 
     def request_stop(signum, frame):
@@ -319,7 +531,8 @@ def cmd_run(args, settings, shaker, profile, rates, pretest_only: bool) -> int:
     if settle_s:
         print(f"IEPE   : sensor output settled after {settle_s:.1f} s")
         meta["iepe_settle_s"] = round(settle_s, 2)
-        logger.meta(meta)
+    _finish_aux(settings, backend, meta)
+    logger.meta(meta)
     info = getattr(ctl, "pretest_info", None)
     if info:
         print("pretest: response {response_rms_g:.3g} g rms, noise {noise_rms_g:.3g} g rms, "
@@ -342,18 +555,65 @@ def cmd_run(args, settings, shaker, profile, rates, pretest_only: bool) -> int:
     return 0 if result.completed else (1 if result.state == State.ABORTED else 3)
 
 
+def _attach_aux(settings, backend, logger, meta: dict) -> None:
+    """With an aux DAQ: its samples and the AO go to aux.f32 and ao.f32 (vcactl.analysis.sync)."""
+    if settings.aux is None:
+        return
+    from .daq.aux import aux_meta
+    backend.sink = logger.raw_block
+    d = settings.daq
+    meta["aux"] = aux_meta(settings.aux, d.fs_io_hz, d.limits.filter_delay_at(d.fs_io_hz))
+
+
+def _finish_aux(settings, backend, meta: dict) -> None:
+    aux = getattr(backend, "aux", None)          # NiDaq: the convert rate DAQmx chose
+    if settings.aux is not None and getattr(aux, "conv_rate", None):
+        meta["aux"]["convert_rate_hz"] = aux.conv_rate
+
+
+def _aux_text(settings) -> str:
+    aux = settings.aux
+    if aux is None:
+        return ""
+    lines = [f"aux    : {aux.daq.model} ({aux.daq.device}), {aux.rate_hz:g} S/s, start trigger "
+             f"{aux.daq.device}/{aux.trigger_out} -> {settings.daq.device}/{aux.trigger_in}"]
+    for c in aux.channels:
+        what = "AO drive (BNC tee at the amplifier input)" if c.role == "drive_ref" else \
+            f"{c.sensor.name}, {c.mv_per_unit:g} mV/{c.unit}"
+        lines.append(f"  {c.name:<12} {c.physical:<5} {c.role:<9} {what}; range +/-{c.range_v:g} V")
+    return "\n".join(lines) + "\n"
+
+
+def load_run_settings(args):
+    """Settings, DAQ, sensor and, with ``--channels``, the channels file."""
+    settings = load_settings(args.settings, args.daq, args.config_dir, args.sensor or "pcb352b")
+    if getattr(args, "channels", None):
+        settings = load_channels(args.channels, settings, args.config_dir,
+                                 sensor_given=args.sensor is not None)
+    return settings
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if args.cmd == "list-devices":
         return cmd_list_devices()
     if args.cmd == "loopback":
         return cmd_loopback(args)
+    if args.cmd == "record":
+        return cmd_record(args)
+    if args.cmd == "tap":
+        return cmd_tap(args)
     try:
-        settings = load_settings(args.settings, args.daq, args.config_dir, args.sensor)
+        settings = load_run_settings(args)
+        if not settings.has_control:
+            raise ConfigError(f"the channels file '{settings.channels_name}' has no control "
+                              f"channel; {args.cmd} needs one")
         shaker = load_shaker(args.shaker, args.config_dir)
         profile = load_profile(resolve_config_path(args.profile, "test_profiles", args.config_dir))
         validate_setup(settings, shaker)
         settings, rates = resolve_rates(profile, shaker, settings)
+        if settings.aux is not None and settings.daq.decimation != 1:
+            raise ConfigError("an aux DAQ needs decimation 1 (a delta-sigma control DAQ)")
         args.ai_range = _ai_range_override(args, settings)
         f_cal = getattr(args, "open_loop", None)
         if f_cal is not None and not (isinstance(profile, SineProfile)

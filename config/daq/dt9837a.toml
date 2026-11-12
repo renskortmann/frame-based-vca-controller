@@ -46,6 +46,7 @@ ai_terminal_configs = ["SINGLE_ENDED"]
 ao_terminal_configs = []
 ai_couplings = ["AC", "DC"]
 iepe_currents_ma = [4.0]
+ai_channels_max = 4               # DT9837 datasheet: 4 single-ended simultaneous channels
 fs_min_hz = 10000.0            # AO minimum (AI from 195.3 Hz)
 fs_max_hz = 52734.0            # AI and AO maximum; above it the AI PLL would run at 256 x fs
 fs_allowed_hz = []

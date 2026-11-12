@@ -29,6 +29,7 @@ ai_terminal_configs = ["DIFF", "PSEUDO_DIFF"]
 ao_terminal_configs = ["DIFF", "PSEUDO_DIFF"]
 ai_couplings = ["AC", "DC"]
 iepe_currents_ma = [4.0, 10.0, 20.0]
+ai_channels_max = 2               # PXIe-4468 specifications, simultaneously sampled input channels
 fs_min_hz = 100.0
 fs_max_hz = 200000.0           # AO max (AI up to 250 kS/s)
 fs_allowed_hz = []

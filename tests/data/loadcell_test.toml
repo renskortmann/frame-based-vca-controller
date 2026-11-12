@@ -1,0 +1,5 @@
+# Test load cell (one axis of a 3-axis cell) through a bridge amplifier: 100 mV/N at the DAQ input.
+name = "load cell (test)"
+unit = "N"
+sensitivity_mv_per_n = 100.0
+range_n_pk = 50.0

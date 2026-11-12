@@ -1,0 +1,18 @@
+# Brüel & Kjær Type 8230: DeltaTron (IEPE) force transducer, 110 mV/N.
+# Values from the HBK product data "DeltaTron Force Transducers Types 8230, 8230-001, 8230-002 and
+# 8230-003" (BP 2080), downloaded from bksv.com (2026-11-12); not yet in the Nextcloud folder.
+# Recorded channel (role "force" in a channels file); it cannot close the control loop.
+#
+# Not checked by the controller:
+# - Full scale output +/-5 V: at 110 mV/N the Q2 lidar's +/-2 V analog input is reached at 18 N.
+# - Residual noise 0.00062 N rms; linearity < +/-1 % full scale; max. compression 0.9 kN.
+# - Mounted resonance 75 kHz (unloaded); stiffness 2.0 kN/um; mass 30.2 g.
+# - The data sheet gives no frequency range (f_min_hz, f_max_hz left out).
+name = "B&K 8230"
+unit = "N"
+sensitivity_mv_per_n = 110.0       # typical; replace with the calibration chart value
+range_n_pk = 45.0                  # full scale, compression and tension
+mass_kg = 0.0302
+iepe_min_ma = 2.0                  # power supply 2-20 mA (18-30 V DC)
+iepe_max_ma = 20.0
+iepe_bias_max_v = 10.0             # DC output bias +8 to +10 V

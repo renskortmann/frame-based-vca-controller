@@ -28,7 +28,7 @@ from scipy.ndimage import uniform_filter1d
 
 from .config import ShakerConfig, Settings, validate_setup
 from .daq.base import DaqBackend, DaqFault
-from .drive import RandomDriveGenerator, flat_psd
+from .drive import PeriodicDriveGenerator, RandomDriveGenerator, flat_psd, period_samples
 from .dsp.resample import Decimator, Interpolator, design_lowpass, total_delay_control_samples
 from .dsp.spectral import AutoSpectrumAverager, CrossSpectrumAverager, Spectrum
 from .logger import RunLogger
@@ -57,10 +57,11 @@ class OperatorStop(AbortError):
 
 
 class History:
-    """Ring buffer addressed by absolute sample index."""
+    """Ring buffer addressed by absolute sample index; ``width`` > 0: rows of that many
+    channels."""
 
-    def __init__(self, capacity: int, dtype=float):
-        self.buf = np.zeros(capacity, dtype=dtype)
+    def __init__(self, capacity: int, dtype=float, width: int = 0):
+        self.buf = np.zeros((capacity, width) if width else capacity, dtype=dtype)
         self.cap = capacity
         self.count = 0
 
@@ -82,8 +83,9 @@ class StepResult:
     drive_rms_v: float
     drive_peak_v: float
     clip_fraction: float
-    ai_peak_v: float
+    ai_peak_v: float                # control channel
     block_rms_g: float
+    ai_peaks_v: np.ndarray | None = None    # every channel, control first (RuntimeMonitor)
 
 
 @dataclass
@@ -122,6 +124,9 @@ class ControllerBase:
                  ai_range_v: float | str | None = None, record: bool = False):
         validate_setup(settings, shaker)
         settings.require_rates(type(self).__name__)
+        if not settings.has_control:
+            raise ValueError(f"{type(self).__name__}: the channel set "
+                             f"'{settings.channels_name}' has no control channel")
         self.settings, self.shaker, self.profile = settings, shaker, profile
         self.backend, self.logger, self.on_status = backend, logger, on_status
         self.record = record and logger is not None    # raw drive and response to raw.f32
@@ -146,6 +151,11 @@ class ControllerBase:
         taps = design_lowpass(d.fs_io_hz, self.R)
         self.interp = Interpolator(taps, self.R)
         self.decim = Decimator(taps, self.R)
+        # recorded channels besides the control channel (channels file): same FIR, so the same
+        # delay; scaled to their own units (g, N)
+        self.extras = settings.extra_channels
+        self.decim_extra = Decimator(taps, self.R)
+        self.extra_scale = np.array([1.0 / c.v_per_unit for c in self.extras])
         # drive -> response delay: FIR resampling plus the DAQ's converter filters (DSA devices)
         self.delay = (total_delay_control_samples(taps, self.R)
                       + round(d.limits.filter_delay_at(d.fs_io_hz) / self.R))
@@ -155,11 +165,13 @@ class ControllerBase:
         self.drive_hist = History(cap)
         self.seg_hist = History(cap, dtype=np.int64)
         self.resp_hist = History(cap)
+        self.extra_hist = History(cap, width=len(self.extras)) if self.extras else None
 
         self.frf = CrossSpectrumAverager(c.frf_averages)
         self.resp_ctrl = AutoSpectrumAverager(c.control_dof / 2)
         self.resp_disp = AutoSpectrumAverager(c.dof / 2)
         self.noise = AutoSpectrumAverager(1e9)       # linear average
+        self.resp_period: AutoSpectrumAverager | None = None   # periodic random: this period
 
         self.seg = 0
         self.seg_level = {0: 0.0}
@@ -181,6 +193,12 @@ class ControllerBase:
     @property
     def t_s(self) -> float:
         return self.samples / self.fs
+
+    @property
+    def response_lag(self) -> int:
+        """Control-rate samples between a drive sample in raw.f32 and the response sample it
+        causes (the AO queue plus the resampling and converter filter delay)."""
+        return self.P * self.half + self.delay
 
     def _new_segment(self, kind: str, level_lin: float) -> int:
         self.seg += 1
@@ -207,17 +225,24 @@ class ControllerBase:
         self.backend.write(y)
 
         ai = self.backend.read(self.block_io)
-        r = self.decim.process(ai) / self.v_per_g
+        ai = ai.reshape(len(ai), -1)                 # (samples, channels), control first
+        r = self.decim.process(ai[:, 0]) / self.v_per_g
         self.resp_hist.append(r)
+        extra = None
+        if self.extras:
+            extra = self.decim_extra.process(ai[:, 1:]) * self.extra_scale
+            self.extra_hist.append(extra)
         if self.record:
-            self.logger.raw(np.clip(x, -lim, lim), r)
+            self.logger.raw(np.clip(x, -lim, lim), r, extra)
         self.samples += self.half
         self._update_spectra()
+        peaks = np.max(np.abs(ai), axis=0)
         return StepResult(drive_rms_v=float(np.sqrt(np.mean(y**2))),
                           drive_peak_v=float(np.max(np.abs(y))),
                           clip_fraction=float(np.mean(clipped)),
-                          ai_peak_v=float(np.max(np.abs(ai))),
-                          block_rms_g=float(np.std(r)))
+                          ai_peak_v=float(peaks[0]),
+                          block_rms_g=float(np.std(r)),
+                          ai_peaks_v=peaks)
 
     def _update_spectra(self) -> None:
         m = self.resp_hist.count
@@ -242,6 +267,8 @@ class ControllerBase:
             gyy /= self.seg_level[seg]
             self.resp_ctrl.update(gyy)
             self.resp_disp.update(gyy)
+            if self.resp_period is not None:
+                self.resp_period.update(gyy)
 
     def _band_rms(self, psd: np.ndarray) -> float:
         return float(np.sqrt(np.sum(psd[self.band]) * self.df))
@@ -289,7 +316,7 @@ class ControllerBase:
         while self.noise.count < self.settings.pretest.noise_blocks:
             self._check_stop()
             sd = self._step(zeros)
-            self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            self.monitor.check_io(sd.ai_peaks_v, sd.drive_rms_v, sd.clip_fraction)
 
     def _pretest_drive_rms(self) -> float:
         """Probe at PRETEST_PROBE_DB below ``pretest.drive_rms_v`` and lower the pretest drive if its
@@ -305,7 +332,7 @@ class ControllerBase:
         for i in range(n):
             self._check_stop()
             sd = self._step(psd)
-            self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            self.monitor.check_io(sd.ai_peaks_v, sd.drive_rms_v, sd.clip_fraction)
             if i >= n - 2:
                 peak = max(peak, sd.ai_peak_v)
         expected = peak / k              # AI peak at the full pretest drive
@@ -322,7 +349,7 @@ class ControllerBase:
         while self.seg_frames[seg] < pt.frames:
             self._check_stop()
             sd = self._step(psd)
-            self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            self.monitor.check_io(sd.ai_peaks_v, sd.drive_rms_v, sd.clip_fraction)
             self.monitor.check_response(sd.block_rms_g)
             self._report(sd, None)
 
@@ -355,7 +382,7 @@ class ControllerBase:
         env = np.linspace(1.0, 0.0, n_blocks * self.half)
         for i in range(n_blocks):
             sd = self._step(psd_norm, env[i * self.half:(i + 1) * self.half])
-            self.monitor.check_io(sd.ai_peak_v, 0.0, 0.0)
+            self.monitor.check_io(sd.ai_peaks_v, 0.0, 0.0)
         self.gen.reset()
         self._new_segment("silence", 0.0)
         zeros = np.zeros(len(self.freqs))
@@ -420,14 +447,67 @@ class ControllerBase:
 
 
 class Controller(ControllerBase):
-    """Closed-loop random control (see the module docstring)."""
+    """Closed-loop random control (see the module docstring).
+
+    ``profile.drive = "periodic"``: the ramp runs with random drive as usual; at full level the
+    drive switches (crossfade over half a frame) to one fixed-phase period of ``period_n``
+    samples (``PeriodicDriveGenerator``), and the drive correction is applied once per period,
+    at its start, with ``control.periodic_correction_gain``. Every period start is logged in
+    events.csv (``raw_sample``: index in raw.f32), so the analysis can use the periods without
+    a change.
+    """
 
     def __init__(self, settings: Settings, shaker: ShakerConfig, profile: Profile,
-                 backend: DaqBackend, **kwargs):
-        super().__init__(settings, shaker, profile, backend, **kwargs)
+                 backend: DaqBackend, *, seed: int | None = None, **kwargs):
+        super().__init__(settings, shaker, profile, backend, seed=seed, **kwargs)
         self.s_ref = profile.psd(self.freqs)          # at 0 dB
         self.corr_db = np.zeros(len(self.freqs))
         self._abort_lines_blocks = 0
+        self.periodic = getattr(profile, "drive", "random") == "periodic"
+        self.periodic_active = False
+        self._crossfade = False
+        self.period_n = period_samples(profile.period_s, self.fs, self.N) if self.periodic else 0
+        if self.periodic:
+            self.pgen = PeriodicDriveGenerator(
+                self.N, self.fs, self.period_n,
+                np.random.default_rng(None if seed is None else seed + 1))
+        self.period_events: list[dict] = []
+
+    def _rampdown(self, seconds: float) -> None:
+        if self.periodic_active:         # the periods after this sample are not steady
+            event = {"event": "rampdown", "period": self.pgen.periods,
+                     "raw_sample": self.drive_hist.count - self.P * self.half,
+                     "t_s": round(self.t_s, 4), "changed": True, "change_db": math.inf,
+                     "period_samples": self.period_n}
+            self.period_events.append(event)
+            if self.logger:
+                self.logger.append_row("events", event)
+        super()._rampdown(seconds)
+
+    def _step(self, psd_norm: np.ndarray, envelope: np.ndarray | None = None) -> StepResult:
+        if not self.periodic_active:
+            return super()._step(psd_norm, envelope)
+        if envelope is None and self.state == State.RAMPDOWN:    # ramp-down done: silence
+            self.periodic_active = False
+            return super()._step(psd_norm, envelope)
+        boundary = self.pgen.at_boundary
+        x = self.pgen.next_block(psd_norm * self.seg_level[self.seg])
+        if self._crossfade:              # from the random drive: its tail fades out
+            x = self.gen.tail + x * self.gen.window[:self.half]
+            self.gen.reset()
+            self._crossfade = False
+        if boundary:
+            event = {"event": "period_start", "period": self.pgen.periods,
+                     "raw_sample": self.drive_hist.count - self.P * self.half,
+                     "t_s": round(self.t_s, 4), "changed": self.pgen.changed,
+                     "change_db": round(self.pgen.change_db, 4),
+                     "period_samples": self.period_n}
+            self.period_events.append(event)
+            if self.logger:
+                self.logger.append_row("events", event)
+        if envelope is not None:
+            x = x * envelope
+        return self._io(x)
 
     def _set_level(self, level_db: float) -> None:
         self.level_db = level_db
@@ -452,19 +532,30 @@ class Controller(ControllerBase):
     def _final_snapshot(self) -> None:
         self._snapshot("psd_final")
 
-    def _correct(self) -> None:
+    def _correct(self, gain: float | None = None, averager: AutoSpectrumAverager | None = None,
+                 dof: float | None = None, deadband_db: float = 0.0) -> bool:
+        """Correct the drive per line from the response PSD of ``averager`` (default the
+        control average, ``control_dof``) towards the reference; lines within ``deadband_db``
+        are left alone. False if nothing was corrected."""
         b = self.band
-        meas = self.resp_ctrl.value[b]
+        gain = self.c.correction_gain if gain is None else gain
+        averager = averager or self.resp_ctrl
+        dof = self.c.control_dof if dof is None else dof
+        meas = averager.value[b]
         ref = self.s_ref[b]
         with np.errstate(divide="ignore"):
             err = np.where(meas > 0, 10 * np.log10(ref / np.where(meas > 0, meas, 1.0)), 0.0)
         # A chi-square PSD estimate with v DOF is biased low in dB by about 10/ln(10)/v;
         # without this term the loop settles slightly above the reference.
-        err -= 10 / math.log(10) / self.c.control_dof
-        step = np.clip(self.c.correction_gain * err, -self.c.max_step_db, self.c.max_step_db)
+        err -= 10 / math.log(10) / dof
+        err[np.abs(err) <= deadband_db] = 0.0
+        if not np.any(err):
+            return False
+        step = np.clip(gain * err, -self.c.max_step_db, self.c.max_step_db)
         step = uniform_filter1d(step, 3, mode="nearest")
         self.corr_db[b] = np.clip(self.corr_db[b] + step,
                                   -self.c.max_correction_db, self.c.max_correction_db)
+        return True
 
     def _evaluate(self) -> Evaluation | None:
         if self.resp_disp.value is None:
@@ -526,13 +617,27 @@ class Controller(ControllerBase):
         next_snapshot = c.snapshot_interval_s
         while True:
             self._check_stop()
-            self._drive_psd = self._run_drive_psd()
+            if self.periodic and self.state == State.RUN and not self.periodic_active:
+                self.periodic_active = True          # full level: switch to the periodic drive
+                self._crossfade = True
+                self._drive_psd = self._run_drive_psd()
+            elif self.periodic_active:
+                # the drive changes only when a correction is applied: once per period, from
+                # the response averaged over the period just ended (not with every FRF update)
+                if self.pgen.at_boundary:
+                    rp = self.resp_period
+                    if rp is not None and rp.count >= 2 and self._correct(
+                            c.periodic_correction_gain, rp, 2 * rp.count, c.periodic_deadband_db):
+                        self._drive_psd = self._run_drive_psd()
+                    self.resp_period = AutoSpectrumAverager(1e9)    # linear average
+            else:
+                self._drive_psd = self._run_drive_psd()
             count_before = self.resp_ctrl.count
             sd = self._step(self._drive_psd)
             ev = self._evaluate()
             frames = self.seg_frames[self.seg]
 
-            self.monitor.check_io(sd.ai_peak_v, sd.drive_rms_v, sd.clip_fraction)
+            self.monitor.check_io(sd.ai_peaks_v, sd.drive_rms_v, sd.clip_fraction)
             self.monitor.check_response(sd.block_rms_g)
             if ev is not None and frames >= 2:
                 self.monitor.check_open_loop(sd.block_rms_g, ev.ref_rms_g)
@@ -540,7 +645,7 @@ class Controller(ControllerBase):
             if settled and abs(ev.rms_err_db) > tol.rms_abort_db:
                 raise AbortError(f"rms error {ev.rms_err_db:+.2f} dB exceeds +/-{tol.rms_abort_db} dB")
 
-            if self.resp_ctrl.count > count_before:
+            if self.resp_ctrl.count > count_before and not self.periodic_active:
                 self._correct()
 
             if self.state == State.RAMP:

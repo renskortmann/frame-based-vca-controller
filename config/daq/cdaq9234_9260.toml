@@ -40,6 +40,7 @@ ai_terminal_configs = ["PSEUDO_DIFF"]
 ao_terminal_configs = []
 ai_couplings = ["AC", "DC"]
 iepe_currents_ma = [2.0]
+ai_channels_max = 4               # NI 9234 specifications, Number of channels
 fs_min_hz = 1651.612903        # 51.2 kS/s / 31
 fs_max_hz = 51200.0
 # Data rates (fM / 256) / n, fM = 13.1072 MHz, n = 1 .. 31 (NI 9234; the NI 9260 has the same

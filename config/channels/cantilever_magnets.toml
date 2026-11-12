@@ -1,0 +1,79 @@
+# Cantilever beam, driven tests with the magnetic damping: one K3D40 behind each electromagnet, recorded on a USB-6211 in sync with the USB-4431
+# (cantilever_test_proposal.md, sections 2 and 6). Like cantilever_driven.toml, plus [aux].
+#
+# Wiring: USB-6211 PFI 4 -> USB-4431 PFI 0 (start trigger); the AO drive through a BNC tee at
+# the amplifier input -> USB-6211 ai0 (drive_ref); the bridge amplifier outputs -> ai1-ai6
+# (differential). Seven channels at 25.6 kS/s = 179 kS/s of the 6211's 250 kS/s aggregate.
+# After a run: python tools/frf_damping.py sync RUN (aux_aligned.f32).
+#
+# Which axis is normal and which tangential to the beam depends on how the load cells are
+# mounted: rename lc1_x etc. accordingly, and give each axis its calibrated sensitivity
+# (mV/N at the DAQ input; k3d40_50n assumes 100 mV/N).
+name = "cantilever driven, magnets treatment with load cells"
+
+[[channel]]
+name = "drive_point"
+physical = "ai0"
+sensor = "pcb352b"
+role = "control"
+
+[[channel]]
+name = "force"
+physical = "ai1"
+sensor = "bk8230_001"
+role = "force"
+
+[[channel]]
+name = "base"
+physical = "ai3"
+sensor = "pcb356b18"
+role = "response"
+sensitivity = 1048.0
+
+[aux]
+daq = "usb6211"
+device = "Dev2"                  # the USB-6211's name in NI MAX (the USB-4431 is Dev1)
+rate_hz = 25600.0
+trigger_out = "PFI4"
+trigger_in = "PFI0"
+
+[[aux.channel]]
+name = "drive_ref"
+physical = "ai0"
+role = "drive_ref"
+
+[[aux.channel]]
+name = "lc1_x"
+physical = "ai1"
+sensor = "k3d40_50n"
+role = "load"
+
+[[aux.channel]]
+name = "lc1_y"
+physical = "ai2"
+sensor = "k3d40_50n"
+role = "load"
+
+[[aux.channel]]
+name = "lc1_z"
+physical = "ai3"
+sensor = "k3d40_50n"
+role = "load"
+
+[[aux.channel]]
+name = "lc2_x"
+physical = "ai4"
+sensor = "k3d40_50n"
+role = "load"
+
+[[aux.channel]]
+name = "lc2_y"
+physical = "ai5"
+sensor = "k3d40_50n"
+role = "load"
+
+[[aux.channel]]
+name = "lc2_z"
+physical = "ai6"
+sensor = "k3d40_50n"
+role = "load"

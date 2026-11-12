@@ -34,6 +34,8 @@ class Profile:
     psd_g2_hz: tuple       # PSD at each breakpoint
     tolerance: Tolerance = field(default_factory=Tolerance)
     duration_s: float = 60.0
+    drive: str = "random"   # "periodic": one fixed-phase period at full level (see Controller)
+    period_s: float = 20.0  # periodic: period (rounded up to a power of two of samples)
 
     @property
     def f_lo(self) -> float:
@@ -118,9 +120,12 @@ def load_profile(path: Path | str) -> Profile | SineProfile:
     kind = data.get("type", "random")
     if kind in SINE_TYPES:
         return load_sine_profile(data, path)
+    if kind == "tap":
+        raise ConfigError(f"{where}: a tap test profile is for vcactl tap")
     if kind != "random":
         raise ConfigError(f"{where}: type must be one of random, {', '.join(SINE_TYPES)}")
-    unknown = set(data) - {"type", "name", "duration_s", "breakpoints", "tolerance"}
+    unknown = set(data) - {"type", "name", "duration_s", "breakpoints", "tolerance", "drive",
+                           "period_s"}
     if unknown:
         raise ConfigError(f"{where}: unknown key(s) {sorted(unknown)}")
     f, s = resolve_breakpoints(data.get("breakpoints"), where)
@@ -130,8 +135,14 @@ def load_profile(path: Path | str) -> Profile | SineProfile:
     duration = float(data.get("duration_s", 60.0))
     if duration <= 0:
         raise ConfigError(f"{where}: duration_s must be > 0")
+    drive = data.get("drive", "random")
+    if drive not in ("random", "periodic"):
+        raise ConfigError(f"{where}: drive must be random or periodic")
+    period = float(data.get("period_s", 20.0))
+    if period <= 0:
+        raise ConfigError(f"{where}: period_s must be > 0")
     return Profile(name=str(data.get("name", path.stem)), f_hz=f, psd_g2_hz=s,
-                   tolerance=tol, duration_s=duration)
+                   tolerance=tol, duration_s=duration, drive=drive, period_s=period)
 
 
 # ---------------------------------------------------------------------------- sine profiles

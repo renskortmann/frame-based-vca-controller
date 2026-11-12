@@ -183,6 +183,24 @@ def preflight_sine(profile: SineProfile, shaker: ShakerConfig, settings: Setting
     return PreflightReport(checks)
 
 
+def check_channel(ch, peak_v: float, range_v: float, s) -> None:
+    """AI overload, sensor range and (role force) ``safety.force_limit_n`` of one channel with AI
+    peak ``peak_v`` on the +/-``range_v`` range; raises AbortError."""
+    if ch.role == "loopback":
+        return
+    if peak_v >= s.ai_overload_fraction * range_v:
+        raise AbortError(f"AI overload on channel '{ch.name}' ({ch.physical}): {peak_v:.3g} V "
+                         f"on the +/-{range_v:g} V range")
+    value = peak_v / ch.v_per_unit
+    if value > ch.sensor.range_pk:
+        raise AbortError(f"sensor over range on channel '{ch.name}': {value:.3g} {ch.unit} "
+                         f"peak exceeds the {ch.sensor.name} range {ch.sensor.range_pk:g} "
+                         f"{ch.unit}")
+    if ch.role == "force" and s.force_limit_n > 0 and value > s.force_limit_n:
+        raise AbortError(f"force limit: {value:.3g} N peak on channel '{ch.name}' exceeds "
+                         f"safety.force_limit_n = {s.force_limit_n:g} N")
+
+
 class RuntimeMonitor:
     """Per-block checks. Each method raises AbortError when a limit is violated."""
 
@@ -198,9 +216,14 @@ class RuntimeMonitor:
         self.shaker = shaker
         self.sensor = settings.sensor
         self.v_per_g = settings.v_per_g
+        self.extras = settings.extra_channels
         self.low_response_blocks = 0
 
-    def check_io(self, ai_peak_v: float, drive_rms_v: float, clip_fraction: float) -> None:
+    def check_io(self, ai_peak_v, drive_rms_v: float, clip_fraction: float) -> None:
+        """``ai_peak_v``: the control channel's AI peak, or the peaks of every channel (control
+        first, then ``settings.extra_channels``)."""
+        peaks = np.atleast_1d(np.asarray(ai_peak_v, dtype=float))
+        ai_peak_v = float(peaks[0])
         if ai_peak_v >= self.s.ai_overload_fraction * self.ai_range:
             how = "selected automatically for the target level" if self.ai_auto else "set by hand"
             raise AbortError(f"AI overload: {ai_peak_v:.3g} V on the +/-{self.ai_range:g} V range "
@@ -209,12 +232,17 @@ class RuntimeMonitor:
         if ai_peak_v / self.v_per_g > self.sensor.range_g_pk:
             raise AbortError(f"sensor over range: {ai_peak_v / self.v_per_g:.2f} g peak exceeds "
                              f"the {self.sensor.name} range {self.sensor.range_g_pk:g} g")
+        for ch, peak in zip(self.extras, peaks[1:]):
+            self._check_channel(ch, float(peak))
         if drive_rms_v > self.shaker.max_drive_rms_v:
             raise AbortError(f"drive rms {drive_rms_v:.3f} V exceeds limit "
                              f"{self.shaker.max_drive_rms_v:.3f} V")
         if clip_fraction > self.s.max_clip_fraction:
             raise AbortError(f"drive clipping: {100 * clip_fraction:.2f}% of samples at "
                              f"+/-{self.shaker.max_drive_v:g} V")
+
+    def _check_channel(self, ch, peak_v: float) -> None:
+        check_channel(ch, peak_v, ch.range_v, self.s)
 
     def check_response(self, response_rms_g: float) -> None:
         if response_rms_g > self.shaker.accel_random_rms_g:

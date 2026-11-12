@@ -40,6 +40,7 @@ ai_terminal_configs = ["PSEUDO_DIFF"]
 ao_terminal_configs = []
 ai_couplings = ["AC", "DC"]
 iepe_currents_ma = [4.0]
+ai_channels_max = 3               # NI 9232 specifications, Number of channels
 fs_min_hz = 984.615385         # 25.6 kS/s / 26
 fs_max_hz = 102400.0           # NI 9232 maximum (NI 9263: 3 us update time for one channel)
 # Data rates fM / (2 m n), fM = 13.1072 MHz, m = 64, 128, 256, n = 1 .. 26.

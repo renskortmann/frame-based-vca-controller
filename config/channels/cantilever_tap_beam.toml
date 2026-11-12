@@ -1,0 +1,24 @@
+# Cantilever beam, tap test without the shaker (procedure step 2, stinger disconnected): the
+# impact hammer, the PCB 352B at the drive point and the base accelerometer on the USB-4431.
+# No control channel (vcactl tap). The lidar measures the beam; for its FRFs the hammer can also go
+# to the Q2 analog input (BNC tee + DC blocker, as for the force in the driven tests).
+name = "cantilever tap test, beam"
+
+[[channel]]
+name = "hammer"
+physical = "ai0"
+sensor = "bk8206"
+role = "hammer"
+
+[[channel]]
+name = "drive_point"
+physical = "ai1"
+sensor = "pcb352b"
+
+# Clamp accelerometer: not chosen yet; add it on ai2 like in cantilever_driven.toml.
+
+[[channel]]
+name = "base"
+physical = "ai3"
+sensor = "pcb356b18"
+sensitivity = 1048.0
