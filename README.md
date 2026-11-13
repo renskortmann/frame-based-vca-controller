@@ -910,7 +910,7 @@ Layout:
 - `safety.py`: pre-flight (random and sine) and runtime monitors.
 - `rates.py`: DAQ rate and frame size per run, and the band compatibility check.
 - `daq/nidaq.py` (NI-DAQmx), `daq/ul.py` (UL for Linux, DT9837A), `daq/sim.py`: backends;
-  `daq/aux.py`: the aux DAQ (USB-6211 load cells) and its simulator.
+  `daq/aux_daq.py`: the aux DAQ (USB-6211 load cells) and its simulator.
 - `loopback.py`: the loopback self-test. `record.py`: input-only recording (`InputStream`).
   `tap.py`: the tap test.
 - `analysis/`: spectra and FRFs, modal and ring-down fits, clock alignment, profile notches.

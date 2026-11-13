@@ -385,7 +385,7 @@ tested on hardware yet. User's choices: all seven in milestones; channel sets in
   `periodic_correction_gain` 0.5 and `periodic_deadband_db` 1.0; `_drive_psd` is recomputed only
   when a correction applies (recomputing every block from the ever-updating FRF changed every
   period). events.csv: `period_start` (raw_sample, change_db) and `rampdown`.
-- **Aux DAQ (`[aux]` in a channels file, daq/aux.py, analysis/sync.py).** USB-6211 AI task
+- **Aux DAQ (`[aux]` in a channels file, daq/aux_daq.py, analysis/sync.py).** USB-6211 AI task
   exports its start trigger (PFI 4) to the USB-4431's AI start trigger (PFI 0); the 4431 AI is
   armed first, then the 6211 starts. ao.f32 (AO samples incl. prefill) + aux.f32 via
   `backend.sink` (= `RunLogger.raw_block`). Input-only runs with aux play 10 mV chirp markers

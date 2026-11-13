@@ -72,7 +72,7 @@ class InputStream:
         if not self.markers:
             self.backend.start(None, self.range_v)
             return
-        from .daq.aux import MARKER_EVERY_S
+        from .daq.aux_daq import MARKER_EVERY_S
         from .daq.ul import chirp_marker
         self._marker = chirp_marker(self.fs)
         self._every = max(1, round(MARKER_EVERY_S * self.fs / self.block))

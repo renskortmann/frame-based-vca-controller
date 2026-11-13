@@ -102,7 +102,7 @@ class NiDaq:
         self.fs_io = settings.daq.fs_io_hz
         self.block_io = block_io
         self.channels = read_channels(settings, loopback_channel)
-        self.aux_cfg = settings.aux          # aux DAQ: started by its trigger, see daq.aux
+        self.aux_cfg = settings.aux          # aux DAQ: started by its trigger, see daq.aux_daq
         self.aux = None
         self.sink = None                     # sink(rows, name): ao.f32 and aux.f32 (aux DAQ)
         self.ao_task = self.ai_task = None
@@ -193,7 +193,7 @@ class NiDaq:
             raise DaqFault(f"{d.model} cannot run AI at {self.fs_io} S/s "
                            f"(got {self.actual_rate} S/s); choose another fs_io_hz")
         if self.aux_cfg is not None:
-            from .aux import NiAuxDaq
+            from .aux_daq import NiAuxDaq
             self.aux = NiAuxDaq(self.aux_cfg, self.sink)
             self.aux.create()
             # the AI task starts on the aux DAQ's exported start trigger (wired PFI to PFI)

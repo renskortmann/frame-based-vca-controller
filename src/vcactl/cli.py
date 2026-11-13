@@ -559,7 +559,7 @@ def _attach_aux(settings, backend, logger, meta: dict) -> None:
     """With an aux DAQ: its samples and the AO go to aux.f32 and ao.f32 (vcactl.analysis.sync)."""
     if settings.aux is None:
         return
-    from .daq.aux import aux_meta
+    from .daq.aux_daq import aux_meta
     backend.sink = logger.raw_block
     d = settings.daq
     meta["aux"] = aux_meta(settings.aux, d.fs_io_hz, d.limits.filter_delay_at(d.fs_io_hz))

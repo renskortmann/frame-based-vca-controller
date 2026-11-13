@@ -95,7 +95,7 @@ class SimulatedDaq:
         self.aux_sim = None
         self._sink = None
         if settings.aux is not None:
-            from .aux import SimulatedAux
+            from .aux_daq import SimulatedAux
             self.aux_sim = SimulatedAux(settings.aux, self.fs_io, self.loopback_delay,
                                         ppm=aux_ppm, offset_s=aux_offset_s, seed=seed)
             self._ao_all = np.zeros(0)
