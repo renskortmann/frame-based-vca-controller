@@ -260,8 +260,8 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
 ## Documents outside the repo
 
 - Project folder (Nextcloud, synced; anything written there is shared):
-  `C:\Users\rkortmann\Nextcloud\CITG-macrolab\Projecten\CSAA04 EPICA DP (HF Shakers Alessandro)`,
-  in WSL `/mnt/c/Users/rkortmann/Nextcloud/CITG-macrolab/Projecten/CSAA04 EPICA DP (HF Shakers Alessandro)`.
+  `D:\nextcloud\CITG-macrolab\Projecten\CSAA04 EPICA DP (HF Shakers Alessandro)`,
+  in WSL `/mnt/d/nextcloud/CITG-macrolab/Projecten/CSAA04 EPICA DP (HF Shakers Alessandro)`.
   - `Shakers/`: shaker and amplifier datasheets/manuals (TIRA, BK 4809, Palladium P-2000, BK 4801/4812/2707),
     the RFQ template, the shaker comparison (`shaker_comparison.pdf`, .docx) and other candidates.
   - `Controller + DAQ + accelerometers/`: `NI/` (NI DAQ and C Series specifications, the DAQmx
@@ -269,6 +269,9 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
     manual), `PCB accelerometers/` (352B, 356B18, conditioners), other sensor datasheets
     (ADXL326, optoNCDT 1220, VR9700) and the presentation below.
   - `Ommatidia Lidar/`: Q1/Q2 lidar and VR9700 integration documents.
+  - `docs_and_feedback/`: the cantilever documents below (`cantilever_*.md` and their PDFs, the
+    purchase list) and `markdown-pdf-print.css`. Their images are in `MCAD/`, linked as
+    `../MCAD/...`.
 - Presentation for the researcher (the user's colleague in the same department; the user is the lab
   engineer supporting them): `Controller + DAQ + accelerometers/shaker_controller_options_draft.pptx` in that folder.
   - The user edits it by hand in PowerPoint. Always edit that file (python-pptx on a copy, then copy
@@ -281,7 +284,7 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
     in hours or rates.
   - The 4801/4812 + 2707 runs on 230 V single-phase mains at the lab (the 4801 manual lists
     380 V three-phase for the body; the user confirmed single-phase).
-- Cantilever damping tests for the researcher (2026-11): `cantilever_test_setup.md` is the
+- Cantilever damping tests for the researcher (2026-11, all in `docs_and_feedback/`): `cantilever_test_setup.md` is the
   earlier working note; `cantilever_test_proposal.md` (2026-11-12) is the proposal to the
   researcher, who decides the setup and tests, without lab notes (stripped 2026-11-12).
   `cantilever_test_proposal_with_lab_notes.md` is the user's copy with the
@@ -290,10 +293,38 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
   be made in both (ask the user if unsure). The notes strip with
   `sed '/<div class="lab-note"/,/^<\/div>/d'` (Lab note 1), so no line inside a note may start
   with `</div>`. Write maths in Unicode/HTML, not LaTeX: Markdown PDF
-  doesn't render `$...$`. Page breaks come from `markdown-pdf-print.css` in that folder, loaded
-  through `markdown-pdf.styles` in the workspace file (relative to the exported file's workspace
-  folder). `purchase_list_cantilever_setup.docx` holds the purchase list and a comparison with
+  doesn't render `$...$`. Page breaks come from `markdown-pdf-print.css` in the same folder, loaded
+  through `markdown-pdf.styles` in the workspace file as `docs_and_feedback/markdown-pdf-print.css`
+  (relative to the workspace folder root). `purchase_list_cantilever_setup.docx` holds the purchase list and a comparison with
   the equipment the tests need.
+- Ommatidia's reply (2026-11-16, Grégory Pandraud to the researcher, user in Cc):
+  `docs_and_feedback/Re Revised proposal for the cantilever damping tests.eml`. Its two
+  attachments are only inside the .eml (extract them with Python's `email` module):
+  `TU_Delft_Cantilever_Setup_Summary.pdf` (their OmmPlanner check of our STEP files) and
+  `Q2_technical_questions - Replies.docx` (answers to appendix A's nine questions, noise charts).
+  Ommatidia asked for the order against quotation S00363 (not in the Nextcloud folder).
+  - Placement: Q2 30° view 1.10 m from the beam, centred 275 mm from the clamp, line 20 mm above
+    the centre line; 59 useful points 9-541 mm (9.0-9.5 mm apart), 51 up to 466 mm with the
+    magnetic assembly (the lidar-side magnets hide the last 84 mm). SpeedSync (an optional
+    single-point LDV channel recorded by the Q2) aims at the centre line at ~540 mm from 1.10 m,
+    offset 260 mm along the beam (direction not stated; read as beyond the tip). Divide
+    velocities by cos(angle): at most 1.029.
+  - Q2 analog input: one, DC-coupled, ~1.25 MΩ, ±2 V, ~100 kS/s, anti-aliased, safe to ±15 V;
+    same 125 MHz clock as the array; HDF5 export of points + analog + SpeedSync with time stamps.
+    External start only through the analog input, so the start mark is the digital-output pulse.
+  - Array noise 12 pm/√Hz above 300 Hz (280 below 100 Hz); not a limit for the tests. DOLL is
+    described as raising the bandwidth; its effect on the ±15.5 mm/s range is unconfirmed, as
+    is the 40 kHz rate.
+  - `cantilever_test_proposal_v2_with_lab_notes.md` (2026-11-17) is the proposal revised for
+    this reply, for the user to validate (Lab note R lists the changes and the points to check).
+    Its client version is made only after that, with the sed command of its Lab note 1
+    (`cantilever_test_proposal_v2.md`). The 2026-11-12 files are unchanged.
+  - Design choices in v2 (ours, not Ommatidia's): the force stays on the Q2 input in every test
+    and links the two clocks (tip/drive point = [tip/F]_Q2 x [F/a]_USB-4431, each per record);
+    lidar points near the drive point can't replace the accelerometer (at ζ 0.5 % a point 5 mm
+    away moves 1.6-2.3x as much at held resonances); a one-off check with SpeedSync on the
+    drive-point accelerometer; records aligned by cross-correlating the force; a >= 1 µF film
+    capacitor as DC blocker (RF DC blocks don't pass 20 Hz).
 
 ## Status
 
@@ -349,8 +380,8 @@ in all checks and in the simulator is `safety.payload_kg` + sensor `mass_kg`
 
 ### Cantilever beam test support (2026-11-12, simulator only)
 
-Built for the researcher's cantilever damping tests (`cantilever_test_proposal.md` in the
-Nextcloud folder; its section 6 lists the seven additions, all done). Everything runs in the
+Built for the researcher's cantilever damping tests (`docs_and_feedback/cantilever_test_proposal.md`
+in the Nextcloud folder; its section 6 lists the seven additions, all done). Everything runs in the
 simulator and against fake drivers (`tests/test_channels.py` has a fake nidaqmx); nothing is
 tested on hardware yet. User's choices: all seven in milestones; channel sets in a new
 `--channels` file per test.
@@ -410,7 +441,11 @@ tested on hardware yet. User's choices: all seven in milestones; channel sets in
 - **Still to do or check on hardware.** A 4-channel NiDaq run (channel order, per-channel IEPE);
   the 8230 at 2.1 mA; the PFI 4 -> PFI 0 trigger and `ai_conv_rate` on the USB-6211; the bridge
   amplifier (model, filter below fs/2); beam profiles (sine breakpoints, `ringdown_s` > 5 s);
-  the Q2 start marker (Ommatidia question 3); the antiresonance/force behaviour on the setup.
+  the antiresonance/force behaviour on the setup. Not implemented yet (proposal v2, section 6
+  item 8): reading the Q2's HDF5 files into `vcactl.analysis`, the cosine correction, and
+  aligning the Q2 record with the USB-4431's by the force both record (like analysis/sync.py
+  does for the USB-6211 with the drive signal); the Q2's start pulse goes to a spare USB-6211
+  input as a coarse check. Needs a sample HDF5 file from Ommatidia first.
 - **Physics notes kept for the analysis.** Force measured at the beam: tip/force is the free
   beam's FRF (no shaker damping); a coupled model (beam FE + 40 N/um stinger + 60 g armature)
   gives < 5 % force variation across mode 1 while the drive-point acceleration drops ~1000x at
